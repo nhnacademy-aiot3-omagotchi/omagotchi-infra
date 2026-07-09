@@ -1,0 +1,16 @@
+# environment / secrets
+.env
+.env.*
+*.env
+!*.env.example
+
+# local/editor
+.DS_Store
+.idea/
+.vscode/
+
+# logs
+*.log
+
+# temp
+tmp/

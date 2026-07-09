@@ -1,0 +1,38 @@
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: omagotchi-nginx
+    expose:
+      - "80"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      - frontend
+    networks:
+      - omagotchi-net
+    restart: unless-stopped
+
+  frontend:
+    image: nginx:1.27-alpine
+    container_name: omagotchi-frontend
+    volumes:
+      - ./frontend-dummy:/usr/share/nginx/html:ro
+    expose:
+      - "80"
+    networks:
+      - omagotchi-net
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: omagotchi-cloudflared
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARED_TOKEN}
+    depends_on:
+      - nginx
+    networks:
+      - omagotchi-net
+    restart: unless-stopped
+
+networks:
+  omagotchi-net:
+    name: omagotchi-net
