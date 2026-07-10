@@ -15,10 +15,10 @@ services:
   frontend:
     image: nginx:1.27-alpine
     container_name: omagotchi-frontend
-    volumes:
-      - ./frontend-dummy:/usr/share/nginx/html:ro
     expose:
       - "80"
+    volumes:
+      - ./frontend-dummy:/usr/share/nginx/html:ro
     networks:
       - omagotchi-net
     restart: unless-stopped
