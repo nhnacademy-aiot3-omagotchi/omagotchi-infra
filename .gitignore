@@ -3,14 +3,42 @@
 .env.*
 *.env
 !*.env.example
+!*.env.sample
+secrets/
+.cloudflared/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# machine-local Compose overrides
+compose.override.yaml
+compose.override.yml
+docker-compose.override.yaml
+docker-compose.override.yml
 
 # local/editor
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/
+.fleet/
+*.iml
+*.swp
+*.swo
+*~
 
-# logs
+# logs / runtime
 *.log
+logs/
+*.pid
+*.pid.lock
 
-# temp
+# temp / backup
 tmp/
+*.tmp
+*.bak
+*.orig
+*.rej
