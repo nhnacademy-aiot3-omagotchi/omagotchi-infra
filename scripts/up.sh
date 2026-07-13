@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
-docker compose --env-file ../secrets/prod.env up -d
+"$(dirname "$0")/compose.sh" up -d "$@"
