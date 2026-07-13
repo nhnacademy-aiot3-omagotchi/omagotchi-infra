@@ -1,7 +1,6 @@
 services:
   discovery-service:
-    build:
-      context: ../discovery-service # 서버의 infra 폴더를 기준으로 한 상대 경로
+    image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-discovery-service:${DISCOVERY_IMAGE_TAG:?DISCOVERY_IMAGE_TAG is required}
     environment:
       SERVER_PORT: "8761"
     expose:
@@ -22,8 +21,7 @@ services:
   # 외부 API 요청의 단일 진입점
   # Eureka에서 rule-service를 조회해 lb://rule-service로 전달
   gateway-service:
-    build:
-      context: ../gateway-service
+    image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-gateway-service:${GATEWAY_IMAGE_TAG:?GATEWAY_IMAGE_TAG is required}
     environment:
       SERVER_PORT: "8080"
 
@@ -48,8 +46,7 @@ services:
     restart: unless-stopped
 
   rule-service:
-    build:
-      context: ../rule-service
+    image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-rule-service:${RULE_IMAGE_TAG:?RULE_IMAGE_TAG is required}
     environment:
       # 로컬 실행의 기본값은 8081이지만
       # Compose에서는 환경 변수로 컨테이너 내부 포트를 8080으로 변경
@@ -71,22 +68,19 @@ services:
       - omagotchi-net
     restart: unless-stopped
 
-  # 현재 사용하는 임시 정적 프론트
-  # 실제 프론트 저장소가 준비되면 image/volume과 내부 포트만 교체
   frontend:
-    image: nginx:1.30.3-alpine
+    image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-frontend:${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG is required}
     container_name: omagotchi-frontend
+    environment:
+      SERVER_PORT: "8080"
     expose:
-      - "80"
-    volumes:
-      # 더미 HTML을 Nginx의 정적 파일 경로에 읽기 전용으로 연결
-      - ./frontend-dummy:/usr/share/nginx/html:ro
+      - "8080"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/actuator/health"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 5s
+      retries: 12
+      start_period: 30s
     networks:
       - omagotchi-net
     restart: unless-stopped
