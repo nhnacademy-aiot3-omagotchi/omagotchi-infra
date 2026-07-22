@@ -1,0 +1,62 @@
+name: PR Telegram Notification
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+
+permissions: {}
+
+jobs:
+  notify:
+    name: Notify Telegram
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Send pull request notification
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_PR_CHAT_ID: ${{ secrets.TELEGRAM_PR_CHAT_ID }}
+        run: |
+          set -euo pipefail
+
+          : "${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}"
+          : "${TELEGRAM_PR_CHAT_ID:?TELEGRAM_PR_CHAT_ID is required}"
+
+          message="$(
+            jq -r '
+              "🔀 New Pull Request\n\n"
+              + .repository.full_name
+              + " #"
+              + (.pull_request.number | tostring)
+              + "\n"
+              + .pull_request.title
+              + "\n\nAuthor: @"
+              + .pull_request.user.login
+              + "\n"
+              + .pull_request.html_url
+            ' "$GITHUB_EVENT_PATH"
+          )"
+
+          jq -n \
+            --arg chat_id "$TELEGRAM_PR_CHAT_ID" \
+            --arg text "$message" \
+            '{
+              chat_id: $chat_id,
+              text: $text,
+              link_preview_options: {is_disabled: true}
+            }' \
+            | curl \
+                --fail-with-body \
+                --silent \
+                --show-error \
+                --request POST \
+                --header 'Content-Type: application/json' \
+                --data-binary @- \
+                "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                > /dev/null
