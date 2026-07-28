@@ -1,0 +1,106 @@
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - compose.yaml
+      - nginx/**
+      - scripts/**
+      - .github/workflows/ci.yml
+      - .github/workflows/deploy.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Compose and Shell
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Validate shell scripts
+        shell: bash
+        run: bash -n scripts/*.sh
+
+      - name: Validate Compose configuration
+        shell: bash
+        run: |
+          docker compose \
+            --env-file .env.example \
+            --env-file deploy.env.example \
+            config --quiet
+
+  deploy:
+    name: Deploy to School Server
+    if: ${{ vars.DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    needs:
+      - validate
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          : "${DEPLOY_HOST:?DEPLOY_HOST is required}"
+          : "${DEPLOY_PORT:?DEPLOY_PORT is required}"
+          : "${DEPLOY_USER:?DEPLOY_USER is required}"
+          : "${DEPLOY_PATH:?DEPLOY_PATH is required}"
+          : "${DEPLOY_SSH_KEY:?DEPLOY_SSH_KEY is required}"
+          : "${DEPLOY_KNOWN_HOSTS:?DEPLOY_KNOWN_HOSTS is required}"
+
+          install -d -m 700 "$HOME/.ssh"
+
+          printf '%s\n' "$DEPLOY_SSH_KEY" \
+            > "$HOME/.ssh/deploy_key"
+
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" \
+            > "$HOME/.ssh/known_hosts"
+
+          chmod 600 "$HOME/.ssh/deploy_key"
+          chmod 644 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy infrastructure
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i "$HOME/.ssh/deploy_key" \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=10 \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "bash -s -- '$DEPLOY_PATH' '$GITHUB_SHA'" \
+            < scripts/deploy-infra.sh

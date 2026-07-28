@@ -1,0 +1,31 @@
+name: Infra PR Check
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Compose and Shell
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Validate shell scripts
+        shell: bash
+        run: bash -n scripts/*.sh
+
+      - name: Validate Compose configuration
+        shell: bash
+        run: |
+          docker compose \
+            --env-file .env.example \
+            --env-file deploy.env.example \
+            config --quiet
