@@ -1,3 +1,5 @@
+name: omagotchi
+
 services:
   discovery-service:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-discovery-service:${DISCOVERY_IMAGE_TAG:?DISCOVERY_IMAGE_TAG is required}
