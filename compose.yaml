@@ -75,6 +75,32 @@ services:
     container_name: omagotchi-frontend
     environment:
       SERVER_PORT: "8080"
+
+      # Browser Session Cookie와 만료 정책
+      SESSION_COOKIE_NAME: "OMAGOTCHI_SESSION"
+      SESSION_COOKIE_SECURE: "true"
+      SESSION_TIMEOUT: "PT30M"
+
+      # 외부 Redis 기반 Browser Session 저장소
+      SESSION_REDIS_HOST: "${SESSION_REDIS_HOST:?SESSION_REDIS_HOST is required}"
+      SESSION_REDIS_PORT: "${SESSION_REDIS_PORT:-6379}"
+      SESSION_REDIS_USERNAME: "${SESSION_REDIS_USERNAME:-}"
+      SESSION_REDIS_PASSWORD: "${SESSION_REDIS_PASSWORD:?SESSION_REDIS_PASSWORD is required}"
+      SESSION_REDIS_CONNECT_TIMEOUT: "1s"
+      SESSION_REDIS_COMMAND_TIMEOUT: "2s"
+      SESSION_REDIS_SSL_ENABLED: "${SESSION_REDIS_SSL_ENABLED:-true}"
+      SESSION_REDIS_NAMESPACE: "omagotchi:frontend:session"
+
+      # 내부 Service 호출의 timeout과 Discovery
+      HTTP_CLIENT_CONNECT_TIMEOUT: "2s"
+      HTTP_CLIENT_READ_TIMEOUT: "5s"
+      IDENTITY_SERVICE_BASE_URL: "lb://identity-service"
+      EUREKA_ENABLED: "true"
+      EUREKA_URL: "http://discovery-service:8761/eureka/"
+
+      # Identity 내부 인증 API의 공유 Frontend Credential
+      FRONTEND_USERNAME: "${FRONTEND_USERNAME:?FRONTEND_USERNAME is required}"
+      FRONTEND_PASSWORD: "${FRONTEND_PASSWORD:?FRONTEND_PASSWORD is required}"
     expose:
       - "8080"
     healthcheck:
@@ -83,6 +109,9 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+    depends_on:
+      discovery-service:
+        condition: service_healthy
     networks:
       - omagotchi-net
     restart: unless-stopped

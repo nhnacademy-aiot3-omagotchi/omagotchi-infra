@@ -31,6 +31,6 @@ jobs:
         shell: bash
         run: |
           docker compose \
-            --env-file .env.example \
+            --env-file .env.prod.example \
             --env-file deploy.env.example \
             config --quiet

@@ -19,11 +19,21 @@ if [[ ! -f "${SECRET_ENV_FILE}" ]]; then
   exit 1
 fi
 
-# deploy.env가 배포 이력에 보관되더라도 Secret이 함께 복사되지 않게 방어
-if grep -Eq '^[[:space:]]*CLOUDFLARED_TOKEN=' "${DEPLOY_ENV_FILE}"; then
-  echo "CLOUDFLARED_TOKEN은 deploy.env가 아니라 prod.env에만 두어야 합니다." >&2
-  exit 1
-fi
+# deploy.env와 분리할 운영 Runtime 설정
+for key in \
+  CLOUDFLARED_TOKEN \
+  SESSION_REDIS_HOST \
+  SESSION_REDIS_PORT \
+  SESSION_REDIS_USERNAME \
+  SESSION_REDIS_PASSWORD \
+  SESSION_REDIS_SSL_ENABLED \
+  FRONTEND_USERNAME \
+  FRONTEND_PASSWORD; do
+  if grep -Eq "^[[:space:]]*${key}=" "${DEPLOY_ENV_FILE}"; then
+    echo "${key}는 deploy.env가 아니라 prod.env에만 두어야 합니다." >&2
+    exit 1
+  fi
+done
 
 # 이미지 태그는 deploy.env만이 단일 진실 공급원으로
 for key in \
@@ -41,6 +51,13 @@ done
 # 호출한 셸에서 export한 값이 env 파일보다 우선하지 않도록 제거
 unset \
   CLOUDFLARED_TOKEN \
+  SESSION_REDIS_HOST \
+  SESSION_REDIS_PORT \
+  SESSION_REDIS_USERNAME \
+  SESSION_REDIS_PASSWORD \
+  SESSION_REDIS_SSL_ENABLED \
+  FRONTEND_USERNAME \
+  FRONTEND_PASSWORD \
   DISCOVERY_IMAGE_TAG \
   GATEWAY_IMAGE_TAG \
   RULE_IMAGE_TAG \
