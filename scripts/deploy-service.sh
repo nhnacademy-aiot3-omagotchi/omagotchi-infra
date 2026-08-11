@@ -14,7 +14,7 @@ LOCK_FILE="${ROOT_DIR}/.omagotchi-deploy.lock"
 
 usage() {
   echo "사용법: $0 <service> <40-character-commit-sha>" >&2
-  echo "서비스: frontend | discovery-service | gateway-service | rule-service" >&2
+  echo "서비스: frontend | discovery-service | gateway-service | identity-service | learning-service | rule-service" >&2
 }
 
 # env 파일에서 지정한 값만 조회
@@ -97,6 +97,8 @@ case "${service}" in
   frontend) tag_var="FRONTEND_IMAGE_TAG" ;;
   discovery-service) tag_var="DISCOVERY_IMAGE_TAG" ;;
   gateway-service) tag_var="GATEWAY_IMAGE_TAG" ;;
+  identity-service) tag_var="IDENTITY_IMAGE_TAG" ;;
+  learning-service) tag_var="LEARNING_IMAGE_TAG" ;;
   rule-service) tag_var="RULE_IMAGE_TAG" ;;
   *)
     usage

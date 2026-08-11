@@ -35,7 +35,7 @@ matches() {
     /api/health)
       grep -Eq '"status"[[:space:]]*:[[:space:]]*"UP"' <<<"${body}"
       ;;
-    /api/rules/ping)
+    /api/v1/rules/ping)
       grep -Eq '"service"[[:space:]]*:[[:space:]]*"rule-service"' <<<"${body}" &&
         grep -Eq '"status"[[:space:]]*:[[:space:]]*"UP"' <<<"${body}"
       ;;
@@ -70,9 +70,43 @@ check() {
   return 1
 }
 
+# 인증이 필요한 대표 경로의 무자격 요청 거부 확인
+check_status() {
+  local path="$1"
+  local expected_status="$2"
+  local actual_status
+  local attempt
+
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if actual_status="$(
+      curl -sSL \
+        --connect-timeout 5 \
+        --max-time 15 \
+        --output /dev/null \
+        --write-out '%{http_code}' \
+        -H 'Cache-Control: no-cache' \
+        "${base_url}${path}" 2>/dev/null
+    )" && [[ "${actual_status}" == "${expected_status}" ]]; then
+      echo "PASS GET ${path} (${expected_status})"
+      return 0
+    fi
+
+    if (( attempt < attempts )); then
+      echo "WAIT GET ${path} (${actual_status:-connection-error}, ${attempt}/${attempts})"
+      sleep "${interval}"
+    fi
+  done
+
+  echo "FAIL GET ${path}: expected ${expected_status}, got ${actual_status:-connection-error}" >&2
+  return 1
+}
+
 echo "Smoke Test 시작: ${base_url}"
 check "/"
 check "/health"
 check "/api/health"
-check "/api/rules/ping"
+check "/api/v1/rules/ping"
+check_status "/api/v1/users/me" "401"
+check_status "/api/cohorts" "401"
+check_status "/api/v1/rules" "401"
 echo "Smoke Test 완료"
