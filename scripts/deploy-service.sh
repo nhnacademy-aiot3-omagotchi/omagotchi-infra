@@ -10,6 +10,7 @@ DEPLOY_ENV="${INFRA_DIR}/deploy.env"
 SECRET_ENV="${ROOT_DIR}/secrets/prod.env"
 COMPOSE_SCRIPT="${SCRIPT_DIR}/compose.sh"
 SMOKE_SCRIPT="${SCRIPT_DIR}/smoke-test.sh"
+RULE_ENGINE_SCRIPT="${SCRIPT_DIR}/rule-engine.sh"
 LOCK_FILE="${ROOT_DIR}/.omagotchi-deploy.lock"
 
 usage() {
@@ -36,16 +37,24 @@ compose() {
     "${COMPOSE_SCRIPT}" "$@"
 }
 
+# rule-engine.sh가 사용하는 Compose Adapter
+rule_compose() {
+  compose "$@"
+}
+
 # 대상 서비스만 재생성하고 healthcheck 대기
 start_service() {
-  compose "$1" up \
+  local env_file="$1"
+  local target_service="$2"
+
+  compose "${env_file}" up \
     -d \
     --no-deps \
     --force-recreate \
     --pull never \
     --wait \
     --wait-timeout 180 \
-    "${service}"
+    "${target_service}"
 }
 
 # Frontend와 Gateway의 새 컨테이너 IP 반영
@@ -58,13 +67,58 @@ reload_nginx() {
   compose "$1" exec -T nginx nginx -s reload
 }
 
+# Discovery 재기동 후 운영 Client 재등록 확인
+wait_discovery_clients() {
+  local env_file="$1"
+
+  wait_eureka_application "${env_file}" "FRONTEND"
+  wait_eureka_application "${env_file}" "GATEWAY-SERVICE"
+  wait_eureka_application "${env_file}" "IDENTITY-SERVICE"
+  wait_eureka_application "${env_file}" "LEARNING-SERVICE"
+  wait_rule_engine_cluster "${env_file}"
+}
+
+# 실제 deploy.env에 기록된 이전 Rule 이미지로 순차 복구
+restore_rule_engine() {
+  local target_service="$1"
+
+  if ! start_service "${DEPLOY_ENV}" "${target_service}"; then
+    compose "${DEPLOY_ENV}" pull "${target_service}" || return 1
+    start_service "${DEPLOY_ENV}" "${target_service}" || return 1
+  fi
+}
+
+rollback_rule_service() {
+  echo "이전 이미지로 복구: rule-service (${old_tag})" >&2
+
+  if [[ "${rule_stage}" == "standby" || "${rule_stage}" == "active" ]]; then
+    restore_rule_engine "${rule_standby_service}" || return 1
+  fi
+
+  if [[ "${rule_stage}" == "active" ]]; then
+    restore_rule_engine "${rule_active_service}" || return 1
+  fi
+
+  wait_rule_engine_cluster "${DEPLOY_ENV}" || return 1
+  "${SMOKE_SCRIPT}" "${base_url}"
+}
+
 # 실제 deploy.env에 기록된 이전 이미지로 복구
 rollback() {
+  if [[ "${service}" == "rule-service" ]]; then
+    rollback_rule_service
+    return
+  fi
+
   echo "이전 이미지로 복구: ${service} (${old_tag})" >&2
 
-  if ! start_service "${DEPLOY_ENV}"; then
+  if ! start_service "${DEPLOY_ENV}" "${service}"; then
     compose "${DEPLOY_ENV}" pull "${service}" || return 1
-    start_service "${DEPLOY_ENV}" || return 1
+    start_service "${DEPLOY_ENV}" "${service}" || return 1
+  fi
+
+  if [[ "${service}" == "discovery-service" ]]; then
+    wait_discovery_clients "${DEPLOY_ENV}" || return 1
   fi
 
   reload_nginx "${DEPLOY_ENV}" || return 1
@@ -115,7 +169,11 @@ fi
 [[ -f "${SECRET_ENV}" ]] || { echo "prod.env가 없습니다." >&2; exit 1; }
 [[ -x "${COMPOSE_SCRIPT}" ]] || { echo "compose.sh 실행 권한이 없습니다." >&2; exit 1; }
 [[ -x "${SMOKE_SCRIPT}" ]] || { echo "smoke-test.sh 실행 권한이 없습니다." >&2; exit 1; }
+[[ -r "${RULE_ENGINE_SCRIPT}" ]] || { echo "rule-engine.sh를 읽을 수 없습니다." >&2; exit 1; }
 command -v flock >/dev/null 2>&1 || { echo "flock 명령이 없습니다." >&2; exit 1; }
+
+# shellcheck disable=SC1090
+source "${RULE_ENGINE_SCRIPT}"
 
 # 서로 다른 저장소의 동시 배포 방지
 exec 9>"${LOCK_FILE}"
@@ -123,6 +181,9 @@ flock -w 900 9 || { echo "다른 배포 대기 시간 초과" >&2; exit 1; }
 
 old_tag="$(read_env "${tag_var}" "${DEPLOY_ENV}")"
 base_url="$(read_env SMOKE_BASE_URL "${DEPLOY_ENV}")"
+rule_stage="none"
+rule_active_service=""
+rule_standby_service=""
 
 [[ "${old_tag}" =~ ^[0-9a-f]{40}$ ]] || { echo "기존 이미지 태그가 올바르지 않습니다." >&2; exit 1; }
 [[ "${base_url}" =~ ^https?://[^[:space:]]+$ ]] || { echo "SMOKE_BASE_URL이 올바르지 않습니다." >&2; exit 1; }
@@ -142,12 +203,39 @@ awk -F= -v key="${tag_var}" -v value="${sha}" '
 # 후보 설정 검증 후 새 이미지 전환
 compose "${candidate}" config --quiet
 
-if ! compose "${candidate}" pull "${service}"; then
-  echo "새 이미지 pull 실패. 기존 컨테이너 유지" >&2
-  exit 1
+if [[ "${service}" == "rule-service" ]]; then
+  current_pair="$(rule_engine_resolve_pair "${DEPLOY_ENV}")" || {
+    echo "배포 전 Rule Engine 역할이 안정적이지 않아 배포를 중단합니다." >&2
+    exit 1
+  }
+  read -r rule_active_service rule_standby_service <<<"${current_pair}"
+
+  if ! compose "${candidate}" pull "${RULE_ENGINE_A}" "${RULE_ENGINE_B}"; then
+    echo "새 이미지 pull 실패. 기존 컨테이너 유지" >&2
+    exit 1
+  fi
+
+  rule_stage="standby"
+  start_service "${candidate}" "${rule_standby_service}" || fail_and_rollback "STANDBY 후보 healthcheck 실패"
+  wait_rule_engine_registered "${candidate}" "${rule_standby_service#rule-}" || fail_and_rollback "STANDBY 후보 Eureka 등록 실패"
+  wait_rule_engine_role "${candidate}" "${rule_standby_service}" "STANDBY" || fail_and_rollback "STANDBY 역할 안정화 실패"
+
+  rule_stage="active"
+  start_service "${candidate}" "${rule_active_service}" || fail_and_rollback "나머지 Rule Engine healthcheck 실패"
+  wait_rule_engine_cluster "${candidate}" || fail_and_rollback "Rule Engine exactly-one-ACTIVE 검증 실패"
+else
+  if ! compose "${candidate}" pull "${service}"; then
+    echo "새 이미지 pull 실패. 기존 컨테이너 유지" >&2
+    exit 1
+  fi
+
+  start_service "${candidate}" "${service}" || fail_and_rollback "컨테이너 healthcheck 실패"
+
+  if [[ "${service}" == "discovery-service" ]]; then
+    wait_discovery_clients "${candidate}" || fail_and_rollback "Discovery Client 재등록 실패"
+  fi
 fi
 
-start_service "${candidate}" || fail_and_rollback "컨테이너 healthcheck 실패"
 reload_nginx "${candidate}" || fail_and_rollback "Nginx reload 실패"
 "${SMOKE_SCRIPT}" "${base_url}" || fail_and_rollback "Smoke Test 실패"
 
