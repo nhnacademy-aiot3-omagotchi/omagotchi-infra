@@ -123,9 +123,6 @@ compose up -d --no-deps --remove-orphans discovery-service
 if [[ -z "$(compose ps -q --status running "${RULE_ENGINE_A}")" || \
       -z "$(compose ps -q --status running "${RULE_ENGINE_B}")" ]]; then
   compose up -d --no-deps --wait --wait-timeout 300 "${RULE_ENGINE_A}"
-  wait_rule_engine_registered "${DEPLOY_ENV}" "engine-a"
-  wait_rule_engine_role "${DEPLOY_ENV}" "${RULE_ENGINE_A}" "ACTIVE"
-
   compose up -d --no-deps --wait --wait-timeout 300 "${RULE_ENGINE_B}"
 else
   # 기존 역할 기준 STANDBY부터 갱신해 두 엔진 동시 재생성 방지
