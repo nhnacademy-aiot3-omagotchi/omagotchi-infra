@@ -89,18 +89,60 @@ restore_rule_engine() {
 }
 
 rollback_rule_service() {
+  local rollback_failed=0
+
   echo "이전 이미지로 복구: rule-service (${old_tag})" >&2
 
-  if [[ "${rule_stage}" == "standby" || "${rule_stage}" == "active" ]]; then
-    restore_rule_engine "${rule_standby_service}" || return 1
+  if [[ "${rule_stage}" == "second" ]]; then
+    # 마지막으로 변경한 인스턴스를 먼저 복구해, 1차 교체 인스턴스의 가용성을 유지.
+    if ! restore_rule_engine "${rule_second_service}"; then
+      echo "2차 Rule Engine 복구 실패: ${rule_second_service}" >&2
+      rollback_failed=1
+    fi
   fi
 
-  if [[ "${rule_stage}" == "active" ]]; then
-    restore_rule_engine "${rule_active_service}" || return 1
+  if [[ "${rule_stage}" == "first" || "${rule_stage}" == "second" ]]; then
+    if ! restore_rule_engine "${rule_first_service}"; then
+      echo "1차 Rule Engine 복구 실패: ${rule_first_service}" >&2
+      rollback_failed=1
+    fi
   fi
 
-  wait_rule_engine_cluster "${DEPLOY_ENV}" || return 1
-  "${SMOKE_SCRIPT}" "${base_url}"
+  if ! wait_rule_engine_cluster "${DEPLOY_ENV}"; then
+    rollback_failed=1
+  fi
+
+  if ! "${SMOKE_SCRIPT}" "${base_url}"; then
+    rollback_failed=1
+  fi
+
+  (( rollback_failed == 0 ))
+}
+
+deploy_rule_service() {
+  rule_engine_prepare_rollout "${DEPLOY_ENV}" 1 1 || {
+    echo "배포 전 Rule Engine 역할이 안정적이지 않아 배포를 중단합니다." >&2
+    return 1
+  }
+
+  rule_first_service="${RULE_ENGINE_ROLLOUT_FIRST}"
+  rule_second_service="${RULE_ENGINE_ROLLOUT_SECOND}"
+
+  if ! compose "${candidate}" pull "${RULE_ENGINE_A}" "${RULE_ENGINE_B}"; then
+    echo "새 이미지 pull 실패. 기존 컨테이너 유지" >&2
+    return 1
+  fi
+
+  rule_stage="first"
+  start_service "${candidate}" "${rule_first_service}" || fail_and_rollback "1차 Rule Engine healthcheck 실패"
+  wait_rule_engine_registered "${candidate}" "${rule_first_service#rule-}" || fail_and_rollback "1차 Rule Engine Eureka 등록 실패"
+  wait_rule_engine_cluster "${candidate}" || fail_and_rollback "1차 교체 후 exactly-one-ACTIVE 검증 실패"
+
+  # 역할은 첫 재기동 뒤 바뀔 수 있으므로, 역할명이 아니라 아직 갱신하지 않은 물리 인스턴스를 교체.
+  rule_stage="second"
+  start_service "${candidate}" "${rule_second_service}" || fail_and_rollback "2차 Rule Engine healthcheck 실패"
+  wait_rule_engine_registered "${candidate}" "${rule_second_service#rule-}" || fail_and_rollback "2차 Rule Engine Eureka 등록 실패"
+  wait_rule_engine_cluster "${candidate}" || fail_and_rollback "Rule Engine exactly-one-ACTIVE 검증 실패"
 }
 
 # 실제 deploy.env에 기록된 이전 이미지로 복구
@@ -183,8 +225,8 @@ flock -w 900 9 || { echo "다른 배포 대기 시간 초과" >&2; exit 1; }
 old_tag="$(read_env "${tag_var}" "${DEPLOY_ENV}")"
 base_url="$(read_env SMOKE_BASE_URL "${DEPLOY_ENV}")"
 rule_stage="none"
-rule_active_service=""
-rule_standby_service=""
+rule_first_service=""
+rule_second_service=""
 
 [[ "${old_tag}" =~ ^[0-9a-f]{40}$ ]] || { echo "기존 이미지 태그가 올바르지 않습니다." >&2; exit 1; }
 [[ "${base_url}" =~ ^https?://[^[:space:]]+$ ]] || { echo "SMOKE_BASE_URL이 올바르지 않습니다." >&2; exit 1; }
@@ -205,25 +247,7 @@ awk -F= -v key="${tag_var}" -v value="${sha}" '
 compose "${candidate}" config --quiet
 
 if [[ "${service}" == "rule-service" ]]; then
-  current_pair="$(rule_engine_resolve_pair "${DEPLOY_ENV}")" || {
-    echo "배포 전 Rule Engine 역할이 안정적이지 않아 배포를 중단합니다." >&2
-    exit 1
-  }
-  read -r rule_active_service rule_standby_service <<<"${current_pair}"
-
-  if ! compose "${candidate}" pull "${RULE_ENGINE_A}" "${RULE_ENGINE_B}"; then
-    echo "새 이미지 pull 실패. 기존 컨테이너 유지" >&2
-    exit 1
-  fi
-
-  rule_stage="standby"
-  start_service "${candidate}" "${rule_standby_service}" || fail_and_rollback "STANDBY 후보 healthcheck 실패"
-  wait_rule_engine_registered "${candidate}" "${rule_standby_service#rule-}" || fail_and_rollback "STANDBY 후보 Eureka 등록 실패"
-  wait_rule_engine_role "${candidate}" "${rule_standby_service}" "STANDBY" || fail_and_rollback "STANDBY 역할 안정화 실패"
-
-  rule_stage="active"
-  start_service "${candidate}" "${rule_active_service}" || fail_and_rollback "나머지 Rule Engine healthcheck 실패"
-  wait_rule_engine_cluster "${candidate}" || fail_and_rollback "Rule Engine exactly-one-ACTIVE 검증 실패"
+  deploy_rule_service || exit 1
 else
   if ! compose "${candidate}" pull "${service}"; then
     echo "새 이미지 pull 실패. 기존 컨테이너 유지" >&2

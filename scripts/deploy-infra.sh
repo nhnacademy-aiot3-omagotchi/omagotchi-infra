@@ -100,6 +100,13 @@ source "${RULE_ENGINE_SCRIPT}"
 
 compose config --quiet
 
+rule_engine_start() {
+  local _env_file="$1"
+  local target_service="$2"
+
+  compose up -d --no-deps --wait --wait-timeout 300 "${target_service}"
+}
+
 # Discovery를 먼저 반영한 뒤 모든 Client의 재등록 확인
 compose up -d --no-deps --wait --wait-timeout 300 discovery-service
 compose up \
@@ -120,26 +127,10 @@ wait_eureka_application "${DEPLOY_ENV}" "LEARNING-SERVICE"
 # 이전 단일 rule-service 컨테이너 제거 후 A/B를 순차 기동
 compose up -d --no-deps --remove-orphans discovery-service
 
-if [[ -z "$(compose ps -q --status running "${RULE_ENGINE_A}")" || \
-      -z "$(compose ps -q --status running "${RULE_ENGINE_B}")" ]]; then
-  compose up -d --no-deps --wait --wait-timeout 300 "${RULE_ENGINE_A}"
-  compose up -d --no-deps --wait --wait-timeout 300 "${RULE_ENGINE_B}"
-else
-  # 기존 역할 기준 STANDBY부터 갱신해 두 엔진 동시 재생성 방지
-  current_pair="$(rule_engine_resolve_pair "${DEPLOY_ENV}")" || {
-    echo "배포 전 Rule Engine 역할이 안정적이지 않아 배포를 중단합니다." >&2
-    exit 1
-  }
-  read -r active_service standby_service <<<"${current_pair}"
-
-  compose up -d --no-deps --wait --wait-timeout 300 "${standby_service}"
-  wait_rule_engine_registered "${DEPLOY_ENV}" "${standby_service#rule-}"
-  wait_rule_engine_role "${DEPLOY_ENV}" "${standby_service}" "STANDBY"
-
-  compose up -d --no-deps --wait --wait-timeout 300 "${active_service}"
-fi
-
-wait_rule_engine_cluster "${DEPLOY_ENV}"
+rollout_rule_engine_infra "${DEPLOY_ENV}" || {
+  echo "Rule Engine 순차 배포 실패. 일부 인스턴스가 갱신되었을 수 있으므로 A/B 상태와 이미지 태그를 확인하세요." >&2
+  exit 1
+}
 
 compose up -d --no-deps --wait --wait-timeout 300 nginx cloudflared
 "${SMOKE_SCRIPT}"

@@ -8,6 +8,22 @@ RULE_ENGINE_B="rule-engine-b"
 RULE_ENGINE_WAIT_ATTEMPTS="${RULE_ENGINE_WAIT_ATTEMPTS:-36}"
 RULE_ENGINE_WAIT_INTERVAL_SECONDS="${RULE_ENGINE_WAIT_INTERVAL_SECONDS:-5}"
 RULE_ENGINE_STABLE_CHECKS="${RULE_ENGINE_STABLE_CHECKS:-3}"
+RULE_ENGINE_STABLE_PAIR=""
+RULE_ENGINE_ROLLOUT_FIRST=""
+RULE_ENGINE_ROLLOUT_SECOND=""
+
+rule_engine_other_service() {
+  local service="$1"
+
+  case "${service}" in
+    "${RULE_ENGINE_A}") printf '%s\n' "${RULE_ENGINE_B}" ;;
+    "${RULE_ENGINE_B}") printf '%s\n' "${RULE_ENGINE_A}" ;;
+    *)
+      echo "알 수 없는 Rule Engine 서비스: ${service}" >&2
+      return 1
+      ;;
+  esac
+}
 
 rule_engine_role() {
   local env_file="$1"
@@ -100,29 +116,6 @@ wait_rule_engine_registered() {
   return 1
 }
 
-wait_rule_engine_role() {
-  local env_file="$1"
-  local service="$2"
-  local expected_role="$3"
-  local attempt
-  local actual_role
-
-  for ((attempt = 1; attempt <= RULE_ENGINE_WAIT_ATTEMPTS; attempt++)); do
-    actual_role="$(rule_engine_role "${env_file}" "${service}" || true)"
-    if [[ "${actual_role}" == "${expected_role}" ]]; then
-      echo "Rule Engine 역할 확인: ${service}=${expected_role}"
-      return 0
-    fi
-
-    if (( attempt < RULE_ENGINE_WAIT_ATTEMPTS )); then
-      sleep "${RULE_ENGINE_WAIT_INTERVAL_SECONDS}"
-    fi
-  done
-
-  echo "Rule Engine 역할 확인 실패: ${service}, expected=${expected_role}, actual=${actual_role:-unknown}" >&2
-  return 1
-}
-
 rule_engine_resolve_pair() {
   local env_file="$1"
   local role_a
@@ -150,18 +143,27 @@ wait_rule_engine_pair() {
   local attempt
   local stable_count=0
   local pair
+  local previous_pair=""
+
+  RULE_ENGINE_STABLE_PAIR=""
 
   for ((attempt = 1; attempt <= RULE_ENGINE_WAIT_ATTEMPTS; attempt++)); do
     pair="$(rule_engine_resolve_pair "${env_file}" || true)"
 
-    if [[ -n "${pair}" ]]; then
+    if [[ -n "${pair}" && "${pair}" == "${previous_pair}" ]]; then
       stable_count=$((stable_count + 1))
-      if (( stable_count >= RULE_ENGINE_STABLE_CHECKS )); then
-        echo "Rule Engine 역할 안정화 확인: ${pair}"
-        return 0
-      fi
+    elif [[ -n "${pair}" ]]; then
+      previous_pair="${pair}"
+      stable_count=1
     else
+      previous_pair=""
       stable_count=0
+    fi
+
+    if (( stable_count >= RULE_ENGINE_STABLE_CHECKS )); then
+      RULE_ENGINE_STABLE_PAIR="${pair}"
+      echo "Rule Engine 역할 안정화 확인: ${pair}"
+      return 0
     fi
 
     if (( attempt < RULE_ENGINE_WAIT_ATTEMPTS )); then
@@ -171,6 +173,104 @@ wait_rule_engine_pair() {
 
   echo "Rule Engine exactly-one-ACTIVE 확인 실패" >&2
   return 1
+}
+
+# 실행 중인 물리 인스턴스와 현재 역할을 기준으로 순차 배포 대상을 결정.
+# 두 인스턴스가 모두 실행 중이면 현재 STANDBY를 먼저 선택하되,
+# 첫 재기동 뒤 역할이 바뀌더라도 두 번째 대상은 반대편 물리 인스턴스로 유지.
+rule_engine_prepare_rollout() {
+  local env_file="$1"
+  local engine_a_running="$2"
+  local engine_b_running="$3"
+  local initial_active
+  local initial_standby
+
+  RULE_ENGINE_ROLLOUT_FIRST=""
+  RULE_ENGINE_ROLLOUT_SECOND=""
+
+  case "${engine_a_running}:${engine_b_running}" in
+    0:0)
+      RULE_ENGINE_ROLLOUT_FIRST="${RULE_ENGINE_A}"
+      ;;
+    1:0)
+      RULE_ENGINE_ROLLOUT_FIRST="${RULE_ENGINE_B}"
+      ;;
+    0:1)
+      RULE_ENGINE_ROLLOUT_FIRST="${RULE_ENGINE_A}"
+      ;;
+    1:1)
+      wait_rule_engine_cluster "${env_file}" || return 1
+      read -r initial_active initial_standby <<<"${RULE_ENGINE_STABLE_PAIR}"
+      [[ -n "${initial_active}" && -n "${initial_standby}" ]] || return 1
+      RULE_ENGINE_ROLLOUT_FIRST="${initial_standby}"
+      ;;
+    *)
+      echo "Rule Engine 실행 상태가 올바르지 않습니다: engine-a=${engine_a_running}, engine-b=${engine_b_running}" >&2
+      return 1
+      ;;
+  esac
+
+  # 호출 스크립트가 전역 결과를 읽어 두 번째 물리 인스턴스를 선택.
+  # shellcheck disable=SC2034
+  RULE_ENGINE_ROLLOUT_SECOND="$(rule_engine_other_service "${RULE_ENGINE_ROLLOUT_FIRST}")" || return 1
+}
+
+# Compose 조회 실패와 미실행 상태를 구분.
+# 반환값: 0=실행 중, 1=미실행, 2=조회 실패.
+rule_engine_service_running() {
+  local env_file="$1"
+  local service="$2"
+  local container_id
+
+  container_id="$(rule_compose "${env_file}" ps -q --status running "${service}")" || {
+    echo "Rule Engine 실행 상태 조회 실패: ${service}" >&2
+    return 2
+  }
+
+  [[ -n "${container_id}" ]]
+}
+
+# Infra 전체 배포에서 0대·1대·2대 상태를 같은 순차 배포 규칙으로 처리.
+# 호출 스크립트는 rule_engine_start <deploy-env> <service> Adapter를 제공해야 함.
+rollout_rule_engine_infra() {
+  local env_file="$1"
+  local engine_a_running=0
+  local engine_b_running=0
+  local running_status
+  local running_count
+  local first_service
+  local second_service
+
+  if rule_engine_service_running "${env_file}" "${RULE_ENGINE_A}"; then
+    engine_a_running=1
+  else
+    running_status=$?
+    (( running_status == 1 )) || return "${running_status}"
+  fi
+
+  if rule_engine_service_running "${env_file}" "${RULE_ENGINE_B}"; then
+    engine_b_running=1
+  else
+    running_status=$?
+    (( running_status == 1 )) || return "${running_status}"
+  fi
+
+  running_count=$((engine_a_running + engine_b_running))
+
+  rule_engine_prepare_rollout "${env_file}" "${engine_a_running}" "${engine_b_running}" || return 1
+  first_service="${RULE_ENGINE_ROLLOUT_FIRST}"
+  second_service="${RULE_ENGINE_ROLLOUT_SECOND}"
+
+  rule_engine_start "${env_file}" "${first_service}" || return 1
+  wait_rule_engine_registered "${env_file}" "${first_service#rule-}" || return 1
+
+  if (( running_count > 0 )); then
+    wait_rule_engine_cluster "${env_file}" || return 1
+  fi
+
+  rule_engine_start "${env_file}" "${second_service}" || return 1
+  wait_rule_engine_registered "${env_file}" "${second_service#rule-}" || return 1
+  wait_rule_engine_cluster "${env_file}" || return 1
 }
 
 wait_rule_engine_cluster() {

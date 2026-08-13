@@ -75,7 +75,7 @@ bash -n scripts/*.sh
 - 현재 자동 배포 상태: `DEPLOY_ENABLED=false`
 - 현재 배포 방식: 초기 운영 검증을 위한 서비스별 수동 배포
 - Discovery 변경 배포: 다른 Eureka Client보다 먼저 실행
-- Rule 배포: 현재 STANDBY → ACTIVE 순차 교체
+- Rule 배포: 현재 STANDBY 물리 인스턴스부터 순차 교체
 
 ```text
 feature → dev PR → dev → main PR → Build·Publish
@@ -98,8 +98,10 @@ feature → dev PR → dev → main PR → Build·Publish
 - 후속 개별 서비스 배포: `deploy-service.sh`
 - Rule 논리 대상: `rule-service`
 - Rule 실제 대상: `rule-engine-a`, `rule-engine-b`
-- Rule 후속 배포: 현재 STANDBY 확인 → STANDBY 교체 → ACTIVE 교체
-- Rule 후속 배포 실패: 두 엔진을 `deploy.env`의 직전 이미지 SHA로 순차 복구
+- Rule 후속 배포: 현재 역할 안정화 → STANDBY 물리 인스턴스 교체 → 역할 재검증 → 반대편 물리 인스턴스 교체
+- Rule 후속 배포 실패: 마지막 교체 대상부터 `deploy.env`의 직전 이미지 SHA로 역순 복구
+- Rule 개별 배포 선행 조건: 두 인스턴스 등록·역할 안정화
+- Infra 전체 배포의 단일 인스턴스 상태: 누락 인스턴스 복구 → 역할 안정화 → 기존 인스턴스 교체
 - Rule 배포 완료 조건: 두 엔진 Eureka 등록·연속 3회 exactly-one-ACTIVE
 - 초기 검증 완료: `DEPLOY_ENABLED=true` 전환 검토
 - 전환 이후: Infra `main` Push의 `Deploy Infrastructure` Workflow 실행

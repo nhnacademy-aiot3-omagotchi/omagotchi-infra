@@ -29,9 +29,12 @@ jobs:
         shell: bash
         run: bash -n scripts/*.sh tests/*.sh
 
-      - name: Test deployment health checks
+      - name: Test deployment scripts
         shell: bash
-        run: tests/deploy-health-checks-test.sh
+        run: |
+          for test_script in tests/*-test.sh; do
+            "${test_script}"
+          done
 
       - name: Validate Compose configuration
         shell: bash
