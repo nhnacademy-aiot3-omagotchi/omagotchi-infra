@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Docker Compose 공통 실행 진입점.
+# - prod.env: Runtime 설정과 Secret의 공급원
+# - deploy.env: 이미지 SHA와 Smoke Test 주소의 공급원
+# - 호출 셸의 export 값: 두 파일의 값을 덮어쓰지 못하도록 제거 대상
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INFRA_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
-# 평소에는 infra/deploy.env와 ../secrets/prod.env 사용
-# 배포 스크립트는 DEPLOY_ENV_FILE만 임시 후보 파일로 바꿔서 사용
+# 기본 파일: infra/deploy.env와 ../secrets/prod.env.
+# 서비스 배포 중 후보 이미지 검증: DEPLOY_ENV_FILE만 임시 파일로 교체.
 DEPLOY_ENV_FILE="${DEPLOY_ENV_FILE:-${INFRA_DIR}/deploy.env}"
 SECRET_ENV_FILE="${SECRET_ENV_FILE:-${INFRA_DIR}/../secrets/prod.env}"
 
@@ -19,7 +24,8 @@ if [[ ! -f "${SECRET_ENV_FILE}" ]]; then
   exit 1
 fi
 
-# deploy.env와 분리할 운영 Runtime 설정
+# prod.env 전용 항목.
+# deploy.env 유입 시 Secret과 배포 상태의 책임 혼합으로 간주.
 runtime_keys=(
   CLOUDFLARED_TOKEN
   JWT_ISSUER
@@ -70,7 +76,8 @@ for key in "${runtime_keys[@]}"; do
   fi
 done
 
-# 이미지 태그는 deploy.env만이 단일 진실 공급원으로
+# deploy.env 전용 항목.
+# prod.env 유입 시 현재 실행 이미지의 추적 불가 상태로 간주.
 deploy_keys=(
   DISCOVERY_IMAGE_TAG
   GATEWAY_IMAGE_TAG
@@ -88,11 +95,13 @@ for key in "${deploy_keys[@]}"; do
   fi
 done
 
-# 호출한 셸에서 export한 값이 env 파일보다 우선하지 않도록 제거
+# Compose 환경변수 우선순위에 따른 호출 셸 export 값의 혼입 차단.
 unset "${runtime_keys[@]}" "${deploy_keys[@]}"
 
 cd "${INFRA_DIR}"
 
+# 검증을 통과한 두 파일만 사용하는 실제 Compose 실행.
+# exec 사용 목적: Wrapper Process를 남기지 않는 신호·종료 코드 전달.
 exec docker compose \
   --env-file "${SECRET_ENV_FILE}" \
   --env-file "${DEPLOY_ENV_FILE}" \

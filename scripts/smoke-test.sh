@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 인자가 없으면 deploy.env의 도메인 사용
+# 외부 사용자 경로 기준의 배포 완료 검증.
+# Container 내부 Healthcheck와 구분되는 Cloudflare·Nginx·Gateway 포함 확인.
+# 검증 범위: 공개 화면, 서비스 상태, Rule 라우팅, 인증 경계, 내부 API 미노출.
+
+# 인자 미지정 시 deploy.env의 운영 주소 사용.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_ENV="$(cd -- "${SCRIPT_DIR}/.." && pwd)/deploy.env"
 base_url="${1:-}"
@@ -24,7 +28,7 @@ fi
 attempts="${SMOKE_ATTEMPTS:-30}"
 interval="${SMOKE_INTERVAL_SECONDS:-5}"
 
-# 경로별 필수 응답 내용 확인
+# HTTP 2xx만으로 부족한 공개·상태 경로의 최소 응답 계약 확인.
 matches() {
   local path="$1"
   local body="$2"
@@ -42,7 +46,7 @@ matches() {
   esac
 }
 
-# HTTP 성공과 응답 내용이 맞을 때까지 재시도
+# 배포 직후 Registry·Proxy 전파 지연을 고려한 내용 기반 재시도.
 check() {
   local path="$1"
   local body
@@ -70,7 +74,8 @@ check() {
   return 1
 }
 
-# 인증이 필요한 대표 경로의 무자격 요청 거부 확인
+# 상태 코드 기반 보안 경계 확인.
+# 404: Gateway 미라우팅, 401: 공개 경로로 잘못 노출되지 않은 보호 API.
 check_status() {
   local path="$1"
   local expected_status="$2"
@@ -101,6 +106,8 @@ check_status() {
   return 1
 }
 
+# 위에서 아래로 진행하는 Fail-fast 검증.
+# 하나의 경로라도 최종 실패 시 후속 deploy.env 확정 차단.
 echo "Smoke Test 시작: ${base_url}"
 check "/"
 check "/health"

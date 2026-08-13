@@ -2,10 +2,26 @@
 set -Eeuo pipefail
 umask 077
 
+# Infra 전체 구성 배포 진입점.
+#
+# 처리 순서:
+# 1. 서버 Infra 저장소의 main Fast-forward
+# 2. Compose 설정 검증
+# 3. Discovery 선행 배포와 Eureka Client 재등록 확인
+# 4. Rule Engine A/B 순차 배포와 역할 안정화 확인
+# 5. Nginx·Cloudflare 기동과 외부 Smoke Test
+#
+# 실패 범위:
+# - 실패 즉시 중단과 현재 단계 출력
+# - Git checkout·이미 갱신된 Container의 전체 자동 Rollback 미제공
+# - 최초 운영 배포 중 작업자 확인과 수동 복구를 전제로 한 구조
+
 usage() {
   echo "사용법: $0 [infra-directory] <40-character-commit-sha>" >&2
 }
 
+# GitHub Actions: 서버의 기본 Infra 경로와 배포 SHA 전달.
+# 수동 검증: Infra 경로와 배포 SHA의 명시적 전달 가능.
 if (( $# == 1 )); then
   SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   INFRA_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -36,7 +52,8 @@ LOCK_FILE="${ROOT_DIR}/.omagotchi-deploy.lock"
 [[ -f "${SECRET_ENV}" ]] || { echo "prod.env가 없습니다." >&2; exit 1; }
 command -v flock >/dev/null 2>&1 || { echo "flock 명령이 없습니다." >&2; exit 1; }
 
-# 서비스 이미지 배포와 인프라 배포가 같은 Compose 프로젝트를 동시에 바꾸지 않게 직렬화
+# 전체 Infra 배포와 서비스별 배포의 동시 실행 차단.
+# 동일 Lock File을 사용하는 deploy-service.sh와의 상호 배제.
 exec 9>"${LOCK_FILE}"
 flock -w 900 9 || { echo "다른 배포 대기 시간 초과" >&2; exit 1; }
 
@@ -52,6 +69,7 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   exit 1
 fi
 
+# 실패 메시지와 배포 완료 기록을 위한 배포 전 Revision 보존.
 old_sha="$(git rev-parse HEAD)"
 
 git fetch \
@@ -59,6 +77,7 @@ git fetch \
   origin \
   refs/heads/main:refs/remotes/origin/main
 
+# 임의 SHA·다른 브랜치 SHA·서버 상태의 역행 배포 차단.
 git cat-file -e "${sha}^{commit}" 2>/dev/null || {
   echo "배포할 commit을 찾을 수 없습니다: ${sha}" >&2
   exit 1
@@ -74,19 +93,21 @@ git merge-base --is-ancestor "${old_sha}" "${sha}" || {
   exit 1
 }
 
+# Workflow가 실행된 main SHA와 서버의 실제 Script·Compose 파일 일치.
 git merge --ff-only "${sha}"
 
 [[ -x "${COMPOSE_SCRIPT}" ]] || { echo "compose.sh 실행 권한이 없습니다." >&2; exit 1; }
 [[ -x "${SMOKE_SCRIPT}" ]] || { echo "smoke-test.sh 실행 권한이 없습니다." >&2; exit 1; }
 [[ -r "${RULE_ENGINE_SCRIPT}" ]] || { echo "rule-engine.sh를 읽을 수 없습니다." >&2; exit 1; }
 
+# 실제 deploy.env를 사용하는 전체 Infra Compose Adapter.
 compose() {
   DEPLOY_ENV_FILE="${DEPLOY_ENV}" \
     SECRET_ENV_FILE="${SECRET_ENV}" \
     "${COMPOSE_SCRIPT}" "$@"
 }
 
-# rule-engine.sh가 사용하는 Compose Adapter
+# rule-engine.sh가 전달받은 env 파일로 상태를 조회하기 위한 Adapter.
 rule_compose() {
   local env_file="$1"
   shift
@@ -98,8 +119,11 @@ rule_compose() {
 # shellcheck disable=SC1090
 source "${RULE_ENGINE_SCRIPT}"
 
+# Container 변경 전 Compose 변수 치환·구문·필수값 검증.
 compose config --quiet
 
+# rule-engine.sh의 순서 계산과 실제 Compose 기동의 경계.
+# 순서 판단은 Library, Container 변경은 이 Script의 책임.
 rule_engine_start() {
   local _env_file="$1"
   local target_service="$2"
@@ -107,7 +131,8 @@ rule_engine_start() {
   compose up -d --no-deps --wait --wait-timeout 300 "${target_service}"
 }
 
-# Discovery를 먼저 반영한 뒤 모든 Client의 재등록 확인
+# Discovery 선행 배포.
+# 새 Registry 기동 전 Client 동시 재기동으로 인한 등록 공백 방지.
 compose up -d --no-deps --wait --wait-timeout 300 discovery-service
 compose up \
   -d \
@@ -119,12 +144,14 @@ compose up \
   identity-service \
   learning-service
 
+# Container Healthcheck와 별개인 Eureka 등록 상태 확인.
 wait_eureka_application "${DEPLOY_ENV}" "FRONTEND"
 wait_eureka_application "${DEPLOY_ENV}" "GATEWAY-SERVICE"
 wait_eureka_application "${DEPLOY_ENV}" "IDENTITY-SERVICE"
 wait_eureka_application "${DEPLOY_ENV}" "LEARNING-SERVICE"
 
-# 이전 단일 rule-service 컨테이너 제거 후 A/B를 순차 기동
+# Compose 정의에서 제거된 이전 단일 rule-service Container 정리.
+# A/B Container의 동시 재생성이 아닌 순차 기동 유지.
 compose up -d --no-deps --remove-orphans discovery-service
 
 rollout_rule_engine_infra "${DEPLOY_ENV}" || {
@@ -132,6 +159,7 @@ rollout_rule_engine_infra "${DEPLOY_ENV}" || {
   exit 1
 }
 
+# 내부 서비스 검증 완료 이후 외부 진입점 반영.
 compose up -d --no-deps --wait --wait-timeout 300 nginx cloudflared
 "${SMOKE_SCRIPT}"
 

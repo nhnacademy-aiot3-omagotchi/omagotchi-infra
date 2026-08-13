@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 
-# Rule Engine A/B 운영 확인 함수.
-# 호출 스크립트는 rule_compose <deploy-env> <compose-args...> 함수를 제공해야 함.
+# Rule Engine A/B 상태 조회·안정화 판정·배포 순서 계산 Library.
+# 직접 실행이 아닌 deploy-infra.sh·deploy-service.sh의 source 대상.
+# Infra 전체 배포의 실제 Container 변경 책임: 호출 Script의 rule_engine_start 함수.
+# 실제 Compose 실행 책임: 호출 Script가 제공하는 rule_compose 함수.
 
 RULE_ENGINE_A="rule-engine-a"
 RULE_ENGINE_B="rule-engine-b"
+# 최대 대기 시간: 기본 36회 × 5초.
+# 안정 상태: 동일 ACTIVE/STANDBY 조합의 기본 3회 연속 관찰.
 RULE_ENGINE_WAIT_ATTEMPTS="${RULE_ENGINE_WAIT_ATTEMPTS:-36}"
 RULE_ENGINE_WAIT_INTERVAL_SECONDS="${RULE_ENGINE_WAIT_INTERVAL_SECONDS:-5}"
 RULE_ENGINE_STABLE_CHECKS="${RULE_ENGINE_STABLE_CHECKS:-3}"
-RULE_ENGINE_STABLE_PAIR=""
-RULE_ENGINE_ROLLOUT_FIRST=""
-RULE_ENGINE_ROLLOUT_SECOND=""
+# 함수 결과 공유용 전역 상태.
+# 상태 확인 함수의 진행 로그와 계산 결과를 함께 보존하기 위한 stdout 반환 미사용.
+RULE_ENGINE_STABLE_PAIR=""       # "ACTIVE 서비스 STANDBY 서비스"
+RULE_ENGINE_ROLLOUT_FIRST=""     # 먼저 교체할 물리 Compose 서비스
+RULE_ENGINE_ROLLOUT_SECOND=""    # 나중에 교체할 물리 Compose 서비스
 
 rule_engine_other_service() {
   local service="$1"
@@ -30,6 +36,8 @@ rule_engine_role() {
   local service="$2"
   local response
 
+  # Eureka Metadata가 아닌 각 Container의 자기 역할 API 직접 조회.
+  # 동일 내부 Secret을 사용하는 운영 Container 내부 통신.
   response="$(
     # shellcheck disable=SC2016 # 변수는 Host가 아니라 Container Shell에서 확장
     rule_compose "${env_file}" exec -T "${service}" sh -ec '
@@ -50,6 +58,7 @@ rule_engine_registered() {
   local engine_id="$2"
   local response
 
+  # Eureka의 RULE-SERVICE 등록 목록에서 고유 engine-id 존재 여부 확인.
   response="$(
     rule_compose "${env_file}" exec -T discovery-service \
       curl -fsS \
@@ -67,6 +76,7 @@ eureka_application_registered() {
   local env_file="$1"
   local application_name="$2"
 
+  # 일반 Eureka Client의 Application 등록 응답 존재 여부 확인.
   rule_compose "${env_file}" exec -T discovery-service \
     curl -fsS \
     --connect-timeout 2 \
@@ -121,6 +131,8 @@ rule_engine_resolve_pair() {
   local role_a
   local role_b
 
+  # 허용 상태: ACTIVE 1개와 STANDBY 1개.
+  # 거부 상태: 이중 ACTIVE, 이중 STANDBY, UNKNOWN, 응답 실패.
   role_a="$(rule_engine_role "${env_file}" "${RULE_ENGINE_A}" || true)"
   role_b="$(rule_engine_role "${env_file}" "${RULE_ENGINE_B}" || true)"
 
@@ -147,6 +159,8 @@ wait_rule_engine_pair() {
 
   RULE_ENGINE_STABLE_PAIR=""
 
+  # 순간적인 exactly-one 상태가 아닌 동일 역할 조합의 연속 관찰.
+  # 관찰 중 역할 교체 또는 조회 실패 발생 시 안정 횟수 초기화.
   for ((attempt = 1; attempt <= RULE_ENGINE_WAIT_ATTEMPTS; attempt++)); do
     pair="$(rule_engine_resolve_pair "${env_file}" || true)"
 
@@ -175,9 +189,14 @@ wait_rule_engine_pair() {
   return 1
 }
 
-# 실행 중인 물리 인스턴스와 현재 역할을 기준으로 순차 배포 대상을 결정.
-# 두 인스턴스가 모두 실행 중이면 현재 STANDBY를 먼저 선택하되,
-# 첫 재기동 뒤 역할이 바뀌더라도 두 번째 대상은 반대편 물리 인스턴스로 유지.
+# 실행 중인 물리 인스턴스와 현재 역할을 기준으로 한 순차 배포 대상 결정.
+#
+# 0대: engine-a → engine-b 초기 기동
+# A만 실행: 누락된 engine-b → 기존 engine-a
+# B만 실행: 누락된 engine-a → 기존 engine-b
+# 2대 실행: 현재 STANDBY → 반대편 물리 인스턴스
+#
+# 첫 재기동 뒤 역할 변경과 무관한 물리 인스턴스별 1회 교체 보장.
 rule_engine_prepare_rollout() {
   local env_file="$1"
   local engine_a_running="$2"
@@ -210,7 +229,8 @@ rule_engine_prepare_rollout() {
       ;;
   esac
 
-  # 호출 스크립트가 전역 결과를 읽어 두 번째 물리 인스턴스를 선택.
+  # 1차 대상의 반대편을 2차 대상으로 고정.
+  # 역할 재조회 결과로 1차 대상을 다시 선택하는 중복 교체 방지.
   # shellcheck disable=SC2034
   RULE_ENGINE_ROLLOUT_SECOND="$(rule_engine_other_service "${RULE_ENGINE_ROLLOUT_FIRST}")" || return 1
 }
@@ -230,8 +250,8 @@ rule_engine_service_running() {
   [[ -n "${container_id}" ]]
 }
 
-# Infra 전체 배포에서 0대·1대·2대 상태를 같은 순차 배포 규칙으로 처리.
-# 호출 스크립트는 rule_engine_start <deploy-env> <service> Adapter를 제공해야 함.
+# Infra 전체 배포의 Rule A/B 순차 기동 실행.
+# 호출 Script 요구사항: rule_engine_start <deploy-env> <service> Adapter.
 rollout_rule_engine_infra() {
   local env_file="$1"
   local engine_a_running=0
@@ -264,6 +284,8 @@ rollout_rule_engine_infra() {
   rule_engine_start "${env_file}" "${first_service}" || return 1
   wait_rule_engine_registered "${env_file}" "${first_service#rule-}" || return 1
 
+  # 기존 엔진이 하나 이상인 경우의 중간 exactly-one-ACTIVE 확인.
+  # 0대 초기 기동의 첫 엔진만 존재하는 시점에는 Pair 검증 불가.
   if (( running_count > 0 )); then
     wait_rule_engine_cluster "${env_file}" || return 1
   fi
@@ -276,6 +298,10 @@ rollout_rule_engine_infra() {
 wait_rule_engine_cluster() {
   local env_file="$1"
 
+  # 최종 Cluster 성공 조건:
+  # 1. engine-a Eureka 등록
+  # 2. engine-b Eureka 등록
+  # 3. 동일 exactly-one-ACTIVE 조합의 연속 관찰
   wait_rule_engine_registered "${env_file}" "engine-a" || return 1
   wait_rule_engine_registered "${env_file}" "engine-b" || return 1
   wait_rule_engine_pair "${env_file}" || return 1
