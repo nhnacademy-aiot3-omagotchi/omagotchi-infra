@@ -21,6 +21,11 @@ assert_equals() {
 # shellcheck disable=SC1091
 source "${INFRA_DIR}/scripts/smoke-test.sh"
 
+if bash -c 'source "$1"; smoke_test_main' _ "${INFRA_DIR}/scripts/smoke-test.sh" \
+  >/dev/null 2>&1; then
+  fail "Base URL을 생략한 Smoke Test가 허용되었습니다."
+fi
+
 calls=()
 
 check() {

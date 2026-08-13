@@ -5,9 +5,6 @@ set -euo pipefail
 # Container 내부 Healthcheck와 구분되는 Cloudflare·Nginx·Gateway 포함 확인.
 # 검증 범위: 공개 화면, 서비스 상태, Rule 라우팅, 인증 경계, 내부 API 미노출.
 
-# 인자 미지정 시 deploy.env의 운영 주소 사용.
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-DEPLOY_ENV="$(cd -- "${SCRIPT_DIR}/.." && pwd)/deploy.env"
 base_url=""
 attempts=""
 interval=""
@@ -98,16 +95,12 @@ smoke_test_main() {
     shift
   fi
 
-  if (( $# > 1 )); then
-    echo "사용법: $0 [--skip-rule] [base-url]" >&2
+  if (( $# != 1 )); then
+    echo "사용법: $0 [--skip-rule] <base-url>" >&2
     exit 64
   fi
 
-  base_url="${1:-}"
-  if [[ -z "${base_url}" && -f "${DEPLOY_ENV}" ]]; then
-    base_url="$(awk -F= '$1 == "SMOKE_BASE_URL" { print substr($0, index($0, "=") + 1); exit }' "${DEPLOY_ENV}")"
-  fi
-
+  base_url="$1"
   base_url="${base_url%/}"
   if [[ ! "${base_url}" =~ ^https?://[^[:space:]]+$ ]]; then
     echo "Smoke Test base URL이 올바르지 않습니다." >&2
@@ -116,6 +109,16 @@ smoke_test_main() {
 
   attempts="${SMOKE_ATTEMPTS:-30}"
   interval="${SMOKE_INTERVAL_SECONDS:-5}"
+
+  if [[ ! "${attempts}" =~ ^[0-9]+$ ]] || (( attempts < 1 )); then
+    echo "SMOKE_ATTEMPTS는 1 이상의 정수여야 합니다." >&2
+    exit 64
+  fi
+
+  if [[ ! "${interval}" =~ ^[0-9]+$ ]]; then
+    echo "SMOKE_INTERVAL_SECONDS는 0 이상의 정수여야 합니다." >&2
+    exit 64
+  fi
 
   # 위에서 아래로 진행하는 Fail-fast 검증.
   # 하나의 경로라도 최종 실패 시 후속 deploy.env 확정 차단.

@@ -91,7 +91,7 @@ feature → dev PR → dev → main PR → Build·Publish
 - 실행 방식: Infra 배포 스크립트
 
 ```bash
-./scripts/deploy-infra.sh <40-character-infra-commit-sha>
+./scripts/deploy-infra.sh "$PWD" <40-character-infra-commit-sha>
 ```
 
 - 초기 순서: Discovery 갱신 → 기존 Client 재등록 → Engine A → Engine B
@@ -117,7 +117,7 @@ feature → dev PR → dev → main PR → Build·Publish
 - 자동 배포: 미사용, `DEPLOY_ENABLED=false` 유지
 
 ```bash
-./scripts/deploy-infra.sh --skip-rule <40-character-infra-commit-sha>
+./scripts/deploy-infra.sh --skip-rule "$PWD" <40-character-infra-commit-sha>
 ```
 
 - 예상 상태: Rule 공개 API의 일시적 `503`

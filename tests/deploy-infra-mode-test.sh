@@ -40,7 +40,8 @@ mkdir -p \
   "${fixture_dir}/scripts" \
   "${fixture_dir}/../secrets" \
   "${fake_bin}"
-touch "${fixture_dir}/deploy.env" "${fixture_dir}/../secrets/prod.env"
+printf 'SMOKE_BASE_URL=https://example.invalid\n' >"${fixture_dir}/deploy.env"
+touch "${fixture_dir}/../secrets/prod.env"
 
 cat >"${fake_bin}/git" <<'EOF'
 #!/usr/bin/env bash
@@ -84,6 +85,10 @@ chmod +x \
   "${fixture_dir}/scripts/compose.sh" \
   "${fixture_dir}/scripts/smoke-test.sh"
 
+if bash "${INFRA_DIR}/scripts/deploy-infra.sh" "${sha}" >/dev/null 2>&1; then
+  fail "Infra 경로를 생략한 배포가 허용되었습니다."
+fi
+
 : >"${events_file}"
 MODE_TEST_EVENTS="${events_file}" PATH="${fake_bin}:${PATH}" \
   bash "${INFRA_DIR}/scripts/deploy-infra.sh" --skip-rule "${fixture_dir}" "${sha}" \
@@ -93,7 +98,7 @@ assert_not_contains "rule-rollout:" "${events_file}" \
   "Rule 제외 배포에서 Rule 롤아웃이 실행되었습니다."
 assert_not_contains "--remove-orphans" "${events_file}" \
   "Rule 제외 배포에서 기존 Rule Container 정리가 실행되었습니다."
-assert_contains "smoke:--skip-rule" "${events_file}" \
+assert_contains "smoke:--skip-rule https://example.invalid" "${events_file}" \
   "Rule 제외 Smoke Test 옵션이 전달되지 않았습니다."
 assert_contains "인프라 부분 배포 완료" "${output_file}" \
   "Rule 제외 배포 완료 상태가 명시되지 않았습니다."
@@ -107,7 +112,7 @@ assert_contains "--remove-orphans" "${events_file}" \
   "전체 배포에서 이전 Rule Container 정리가 누락되었습니다."
 assert_contains "rule-rollout:${fixture_dir}/deploy.env" "${events_file}" \
   "전체 배포에서 Rule 롤아웃이 누락되었습니다."
-assert_contains "smoke:" "${events_file}" \
+assert_contains "smoke:https://example.invalid" "${events_file}" \
   "전체 배포 Smoke Test가 누락되었습니다."
 assert_not_contains "smoke:--skip-rule" "${events_file}" \
   "전체 배포에서 Rule Smoke Test가 제외되었습니다."

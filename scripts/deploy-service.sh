@@ -286,8 +286,8 @@ deploy_service_main() {
 
   # 전체 Infra 배포와 다른 서비스별 배포의 동시 실행 차단.
   exec 9>"${LOCK_FILE}"
-  flock -w 900 9 || {
-    echo "다른 배포 대기 시간 초과" >&2
+  flock -n 9 || {
+    echo "다른 배포가 진행 중이므로 즉시 중단합니다." >&2
     exit 1
   }
 

@@ -18,7 +18,7 @@ umask 077
 # - 최초 운영 배포 중 작업자 확인과 수동 복구를 전제로 한 구조
 
 usage() {
-  echo "사용법: $0 [--skip-rule] [infra-directory] <40-character-commit-sha>" >&2
+  echo "사용법: $0 [--skip-rule] <infra-directory> <40-character-commit-sha>" >&2
 }
 
 # Rule 구현 완료 전 최초 운영 환경 확인용 수동 부분 배포.
@@ -29,19 +29,15 @@ if [[ "${1:-}" == "--skip-rule" ]]; then
   shift
 fi
 
-# GitHub Actions: 서버의 기본 Infra 경로와 배포 SHA 전달.
-# 수동 검증: Infra 경로와 배포 SHA의 명시적 전달 가능.
-if (( $# == 1 )); then
-  SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-  INFRA_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-  sha="$1"
-elif (( $# == 2 )); then
-  INFRA_DIR="$(cd -- "$1" && pwd)"
-  sha="$2"
-else
+# 대상 경로와 Revision의 암묵적 추론 금지.
+# GitHub Actions와 수동 배포 모두 두 값을 명시적으로 전달.
+if (( $# != 2 )); then
   usage
   exit 64
 fi
+
+INFRA_DIR="$(cd -- "$1" && pwd)"
+sha="$2"
 
 if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
   echo "인프라 revision은 소문자 16진수 40자리 commit SHA여야 합니다." >&2
@@ -61,10 +57,16 @@ LOCK_FILE="${ROOT_DIR}/.omagotchi-deploy.lock"
 [[ -f "${SECRET_ENV}" ]] || { echo "prod.env가 없습니다." >&2; exit 1; }
 command -v flock >/dev/null 2>&1 || { echo "flock 명령이 없습니다." >&2; exit 1; }
 
+base_url="$(awk -F= '$1 == "SMOKE_BASE_URL" { print substr($0, index($0, "=") + 1); exit }' "${DEPLOY_ENV}")"
+if [[ ! "${base_url}" =~ ^https?://[^[:space:]]+$ ]]; then
+  echo "deploy.env의 SMOKE_BASE_URL이 올바르지 않습니다." >&2
+  exit 1
+fi
+
 # 전체 Infra 배포와 서비스별 배포의 동시 실행 차단.
 # 동일 Lock File을 사용하는 deploy-service.sh와의 상호 배제.
 exec 9>"${LOCK_FILE}"
-flock -w 900 9 || { echo "다른 배포 대기 시간 초과" >&2; exit 1; }
+flock -n 9 || { echo "다른 배포가 진행 중이므로 즉시 중단합니다." >&2; exit 1; }
 
 cd "${INFRA_DIR}"
 
@@ -177,11 +179,11 @@ fi
 # 내부 서비스 검증 완료 이후 외부 진입점 반영.
 compose up -d --no-deps --wait --wait-timeout 300 nginx cloudflared
 if [[ "${skip_rule}" == "true" ]]; then
-  "${SMOKE_SCRIPT}" --skip-rule
+  "${SMOKE_SCRIPT}" --skip-rule "${base_url}"
   echo "인프라 부분 배포 완료: ${old_sha} -> ${sha} (Rule Engine 제외)"
   exit 0
 fi
 
-"${SMOKE_SCRIPT}"
+"${SMOKE_SCRIPT}" "${base_url}"
 
 echo "인프라 배포 완료: ${old_sha} -> ${sha}"
