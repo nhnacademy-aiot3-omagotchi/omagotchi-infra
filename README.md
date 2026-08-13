@@ -84,7 +84,7 @@ feature → dev PR → dev → main PR → Build·Publish
 
 ## 초기 운영 배포
 
-- 선행 조건: Identity·Learning·Rule 이미지 발행
+- 전체 배포 선행 조건: Identity·Learning·Rule 이미지 발행
 - 실행 위치: 학교 서버의 Infra 저장소
 - `deploy.env`: 새 Discovery·Rule 이미지 SHA 설정
 - `prod.env`: `INTERNAL_SHARED_SECRET` 설정
@@ -106,6 +106,23 @@ feature → dev PR → dev → main PR → Build·Publish
 - Rule 배포 완료 조건: 두 엔진 Eureka 등록·연속 3회 exactly-one-ACTIVE
 - 초기 검증 완료: `DEPLOY_ENABLED=true` 전환 검토
 - 전환 이후: Infra `main` Push의 `Deploy Infrastructure` Workflow 실행
+
+### Rule 제외 최초 수동 배포
+
+- 목적: Rule hot-standby 완료 전 운영 네트워크·인증·Learning 연동 확인
+- 적용 대상: Discovery, Frontend, Gateway, Identity, Learning, Nginx, Cloudflare
+- 제외 대상: Rule Engine A/B 기동·역할 확인·Rule Ping
+- 유지 검증: 공개 화면, Health, 인증 경계, Rule 내부 API 미노출
+- 기존 Rule Container: 제거·재생성 없음
+- 자동 배포: 미사용, `DEPLOY_ENABLED=false` 유지
+
+```bash
+./scripts/deploy-infra.sh --skip-rule <40-character-infra-commit-sha>
+```
+
+- 예상 상태: Rule 공개 API의 일시적 `503`
+- 완료 기준: 출력의 `인프라 부분 배포 완료` 확인
+- Rule 준비 이후: `--skip-rule` 없는 전체 배포 수행
 
 ## Rule Engine A/B
 

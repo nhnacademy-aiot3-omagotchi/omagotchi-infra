@@ -8,25 +8,9 @@ set -euo pipefail
 # 인자 미지정 시 deploy.env의 운영 주소 사용.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_ENV="$(cd -- "${SCRIPT_DIR}/.." && pwd)/deploy.env"
-base_url="${1:-}"
-
-if (( $# > 1 )); then
-  echo "사용법: $0 [base-url]" >&2
-  exit 64
-fi
-
-if [[ -z "${base_url}" && -f "${DEPLOY_ENV}" ]]; then
-  base_url="$(awk -F= '$1 == "SMOKE_BASE_URL" { print substr($0, index($0, "=") + 1); exit }' "${DEPLOY_ENV}")"
-fi
-
-base_url="${base_url%/}"
-if [[ ! "${base_url}" =~ ^https?://[^[:space:]]+$ ]]; then
-  echo "Smoke Test base URL이 올바르지 않습니다." >&2
-  exit 64
-fi
-
-attempts="${SMOKE_ATTEMPTS:-30}"
-interval="${SMOKE_INTERVAL_SECONDS:-5}"
+base_url=""
+attempts=""
+interval=""
 
 # HTTP 2xx만으로 부족한 공개·상태 경로의 최소 응답 계약 확인.
 matches() {
@@ -106,15 +90,55 @@ check_status() {
   return 1
 }
 
-# 위에서 아래로 진행하는 Fail-fast 검증.
-# 하나의 경로라도 최종 실패 시 후속 deploy.env 확정 차단.
-echo "Smoke Test 시작: ${base_url}"
-check "/"
-check "/health"
-check "/api/health"
-check "/api/v1/rules/ping"
-check_status "/api/v1/internal/engines/self" "404"
-check_status "/api/v1/users/me" "401"
-check_status "/api/v1/cohorts" "401"
-check_status "/api/v1/rules" "401"
-echo "Smoke Test 완료"
+smoke_test_main() {
+  local skip_rule=false
+
+  if [[ "${1:-}" == "--skip-rule" ]]; then
+    skip_rule=true
+    shift
+  fi
+
+  if (( $# > 1 )); then
+    echo "사용법: $0 [--skip-rule] [base-url]" >&2
+    exit 64
+  fi
+
+  base_url="${1:-}"
+  if [[ -z "${base_url}" && -f "${DEPLOY_ENV}" ]]; then
+    base_url="$(awk -F= '$1 == "SMOKE_BASE_URL" { print substr($0, index($0, "=") + 1); exit }' "${DEPLOY_ENV}")"
+  fi
+
+  base_url="${base_url%/}"
+  if [[ ! "${base_url}" =~ ^https?://[^[:space:]]+$ ]]; then
+    echo "Smoke Test base URL이 올바르지 않습니다." >&2
+    exit 64
+  fi
+
+  attempts="${SMOKE_ATTEMPTS:-30}"
+  interval="${SMOKE_INTERVAL_SECONDS:-5}"
+
+  # 위에서 아래로 진행하는 Fail-fast 검증.
+  # 하나의 경로라도 최종 실패 시 후속 deploy.env 확정 차단.
+  echo "Smoke Test 시작: ${base_url}"
+  check "/"
+  check "/health"
+  check "/api/health"
+
+  if [[ "${skip_rule}" == "true" ]]; then
+    echo "SKIP GET /api/v1/rules/ping (Rule Engine 제외 배포)"
+  else
+    check "/api/v1/rules/ping"
+  fi
+
+  # Rule 미기동 여부와 무관하게 내부 API의 외부 미라우팅 계약 유지.
+  check_status "/api/v1/internal/engines/self" "404"
+  check_status "/api/v1/users/me" "401"
+  check_status "/api/v1/cohorts" "401"
+  check_status "/api/v1/rules" "401"
+  echo "Smoke Test 완료"
+}
+
+# 테스트 source 시 main 미실행, 직접 실행 시에만 실제 검증 시작.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  smoke_test_main "$@"
+fi
