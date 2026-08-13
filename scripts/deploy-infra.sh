@@ -113,7 +113,8 @@ git merge --ff-only "${sha}"
 
 # 실제 deploy.env를 사용하는 전체 Infra Compose Adapter.
 compose() {
-  DEPLOY_ENV_FILE="${DEPLOY_ENV}" \
+  COMPOSE_SKIP_RULE="${skip_rule}" \
+    DEPLOY_ENV_FILE="${DEPLOY_ENV}" \
     SECRET_ENV_FILE="${SECRET_ENV}" \
     "${COMPOSE_SCRIPT}" "$@"
 }
@@ -122,7 +123,8 @@ compose() {
 rule_compose() {
   local env_file="$1"
   shift
-  DEPLOY_ENV_FILE="${env_file}" \
+  COMPOSE_SKIP_RULE="${skip_rule}" \
+    DEPLOY_ENV_FILE="${env_file}" \
     SECRET_ENV_FILE="${SECRET_ENV}" \
     "${COMPOSE_SCRIPT}" "$@"
 }
