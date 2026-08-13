@@ -71,11 +71,11 @@ reload_nginx() {
 wait_discovery_clients() {
   local env_file="$1"
 
-  wait_eureka_application "${env_file}" "FRONTEND"
-  wait_eureka_application "${env_file}" "GATEWAY-SERVICE"
-  wait_eureka_application "${env_file}" "IDENTITY-SERVICE"
-  wait_eureka_application "${env_file}" "LEARNING-SERVICE"
-  wait_rule_engine_cluster "${env_file}"
+  wait_eureka_application "${env_file}" "FRONTEND" || return 1
+  wait_eureka_application "${env_file}" "GATEWAY-SERVICE" || return 1
+  wait_eureka_application "${env_file}" "IDENTITY-SERVICE" || return 1
+  wait_eureka_application "${env_file}" "LEARNING-SERVICE" || return 1
+  wait_rule_engine_cluster "${env_file}" || return 1
 }
 
 # 실제 deploy.env에 기록된 이전 Rule 이미지로 순차 복구
@@ -138,6 +138,7 @@ fail_and_rollback() {
   exit 1
 }
 
+deploy_service_main() {
 # 서비스와 새 이미지 SHA 확인
 if (( $# != 2 )); then
   usage
@@ -246,3 +247,8 @@ fi
 candidate=""
 
 echo "배포 완료: ${service} (${sha})"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  deploy_service_main "$@"
+fi

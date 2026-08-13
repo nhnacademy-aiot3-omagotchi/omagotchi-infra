@@ -176,7 +176,7 @@ wait_rule_engine_pair() {
 wait_rule_engine_cluster() {
   local env_file="$1"
 
-  wait_rule_engine_registered "${env_file}" "engine-a"
-  wait_rule_engine_registered "${env_file}" "engine-b"
-  wait_rule_engine_pair "${env_file}"
+  wait_rule_engine_registered "${env_file}" "engine-a" || return 1
+  wait_rule_engine_registered "${env_file}" "engine-b" || return 1
+  wait_rule_engine_pair "${env_file}" || return 1
 }

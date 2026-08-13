@@ -27,7 +27,11 @@ jobs:
 
       - name: Validate shell scripts
         shell: bash
-        run: bash -n scripts/*.sh
+        run: bash -n scripts/*.sh tests/*.sh
+
+      - name: Test deployment health checks
+        shell: bash
+        run: tests/deploy-health-checks-test.sh
 
       - name: Validate Compose configuration
         shell: bash
@@ -44,7 +48,8 @@ jobs:
       - validate
 
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Lock 대기·Eureka 재등록·Rule A/B 순차 기동의 최대 대기 예산 반영
+    timeout-minutes: 60
 
     environment:
       name: production
