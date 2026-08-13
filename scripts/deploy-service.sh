@@ -136,13 +136,36 @@ rollback_rule_service() {
     rollback_failed=1
   fi
 
-  (( rollback_failed == 0 ))
+  ((rollback_failed == 0))
 }
 
 deploy_rule_service() {
+  local engine_a_running=0
+  local engine_b_running=0
+  local running_status
+
   # 서비스별 Rule 배포의 선행 조건: 두 물리 인스턴스 모두 실행 중.
   # 0대·1대 상태의 복원 책임은 전체 Infra 배포에만 부여.
-  rule_engine_prepare_rollout "${DEPLOY_ENV}" 1 1 || {
+  if rule_engine_service_running "${DEPLOY_ENV}" "${RULE_ENGINE_A}"; then
+    engine_a_running=1
+  else
+    running_status=$?
+    ((running_status == 1)) || return "${running_status}"
+  fi
+
+  if rule_engine_service_running "${DEPLOY_ENV}" "${RULE_ENGINE_B}"; then
+    engine_b_running=1
+  else
+    running_status=$?
+    ((running_status == 1)) || return "${running_status}"
+  fi
+
+  if ((engine_a_running != 1 || engine_b_running != 1)); then
+    echo "Rule Engine 물리 인스턴스 2대가 실행 중이 아닙니다. 전체 Infra 배포로 복원하십시오." >&2
+    return 1
+  fi
+
+  rule_engine_prepare_rollout "${DEPLOY_ENV}" "${engine_a_running}" "${engine_b_running}" || {
     echo "배포 전 Rule Engine 역할이 안정적이지 않아 배포를 중단합니다." >&2
     return 1
   }
@@ -206,16 +229,16 @@ fail_and_rollback() {
 }
 
 deploy_service_main() {
-# 논리 서비스명과 GHCR 이미지 태그로 사용하는 Commit SHA 검증.
-if (( $# != 2 )); then
-  usage
-  exit 64
-fi
+  # 논리 서비스명과 GHCR 이미지 태그로 사용하는 Commit SHA 검증.
+  if (($# != 2)); then
+    usage
+    exit 64
+  fi
 
-service="$1"
-sha="$2"
+  service="$1"
+  sha="$2"
 
-case "${service}" in
+  case "${service}" in
   frontend) tag_var="FRONTEND_IMAGE_TAG" ;;
   discovery-service) tag_var="DISCOVERY_IMAGE_TAG" ;;
   gateway-service) tag_var="GATEWAY_IMAGE_TAG" ;;
@@ -226,43 +249,70 @@ case "${service}" in
     usage
     exit 64
     ;;
-esac
+  esac
 
-if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "이미지 태그는 소문자 16진수 40자리 commit SHA여야 합니다." >&2
-  exit 64
-fi
+  if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "이미지 태그는 소문자 16진수 40자리 commit SHA여야 합니다." >&2
+    exit 64
+  fi
 
-[[ -f "${DEPLOY_ENV}" ]] || { echo "deploy.env가 없습니다." >&2; exit 1; }
-[[ -f "${SECRET_ENV}" ]] || { echo "prod.env가 없습니다." >&2; exit 1; }
-[[ -x "${COMPOSE_SCRIPT}" ]] || { echo "compose.sh 실행 권한이 없습니다." >&2; exit 1; }
-[[ -x "${SMOKE_SCRIPT}" ]] || { echo "smoke-test.sh 실행 권한이 없습니다." >&2; exit 1; }
-[[ -r "${RULE_ENGINE_SCRIPT}" ]] || { echo "rule-engine.sh를 읽을 수 없습니다." >&2; exit 1; }
-command -v flock >/dev/null 2>&1 || { echo "flock 명령이 없습니다." >&2; exit 1; }
+  [[ -f "${DEPLOY_ENV}" ]] || {
+    echo "deploy.env가 없습니다." >&2
+    exit 1
+  }
+  [[ -f "${SECRET_ENV}" ]] || {
+    echo "prod.env가 없습니다." >&2
+    exit 1
+  }
+  [[ -x "${COMPOSE_SCRIPT}" ]] || {
+    echo "compose.sh 실행 권한이 없습니다." >&2
+    exit 1
+  }
+  [[ -x "${SMOKE_SCRIPT}" ]] || {
+    echo "smoke-test.sh 실행 권한이 없습니다." >&2
+    exit 1
+  }
+  [[ -r "${RULE_ENGINE_SCRIPT}" ]] || {
+    echo "rule-engine.sh를 읽을 수 없습니다." >&2
+    exit 1
+  }
+  command -v flock >/dev/null 2>&1 || {
+    echo "flock 명령이 없습니다." >&2
+    exit 1
+  }
 
-# shellcheck disable=SC1090
-source "${RULE_ENGINE_SCRIPT}"
+  # shellcheck disable=SC1090
+  source "${RULE_ENGINE_SCRIPT}"
 
-# 전체 Infra 배포와 다른 서비스별 배포의 동시 실행 차단.
-exec 9>"${LOCK_FILE}"
-flock -w 900 9 || { echo "다른 배포 대기 시간 초과" >&2; exit 1; }
+  # 전체 Infra 배포와 다른 서비스별 배포의 동시 실행 차단.
+  exec 9>"${LOCK_FILE}"
+  flock -w 900 9 || {
+    echo "다른 배포 대기 시간 초과" >&2
+    exit 1
+  }
 
-old_tag="$(read_env "${tag_var}" "${DEPLOY_ENV}")"
-base_url="$(read_env SMOKE_BASE_URL "${DEPLOY_ENV}")"
-# Rule Rollback 범위와 물리 인스턴스 순서의 실행 중 상태 기록.
-rule_stage="none"
-rule_first_service=""
-rule_second_service=""
+  old_tag="$(read_env "${tag_var}" "${DEPLOY_ENV}")"
+  base_url="$(read_env SMOKE_BASE_URL "${DEPLOY_ENV}")"
+  # Rule Rollback 범위와 물리 인스턴스 순서의 실행 중 상태 기록.
+  rule_stage="none"
+  rule_first_service=""
+  rule_second_service=""
 
-[[ "${old_tag}" =~ ^[0-9a-f]{40}$ ]] || { echo "기존 이미지 태그가 올바르지 않습니다." >&2; exit 1; }
-[[ "${base_url}" =~ ^https?://[^[:space:]]+$ ]] || { echo "SMOKE_BASE_URL이 올바르지 않습니다." >&2; exit 1; }
+  [[ "${old_tag}" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "기존 이미지 태그가 올바르지 않습니다." >&2
+    exit 1
+  }
+  [[ "${base_url}" =~ ^https?://[^[:space:]]+$ ]] || {
+    echo "SMOKE_BASE_URL이 올바르지 않습니다." >&2
+    exit 1
+  }
 
-# 기존 deploy.env를 보존한 후보 상태 생성.
-# Script 종료 시 미확정 후보 파일의 자동 폐기.
-candidate="$(mktemp "${ROOT_DIR}/.deploy.env.candidate.XXXXXX")"
-trap '[[ -n "${candidate:-}" ]] && rm -f "${candidate}"' EXIT
+  # 기존 deploy.env를 보존한 후보 상태 생성.
+  # Script 종료 시 미확정 후보 파일의 자동 폐기.
+  candidate="$(mktemp "${ROOT_DIR}/.deploy.env.candidate.XXXXXX")"
+  trap '[[ -n "${candidate:-}" ]] && rm -f "${candidate}"' EXIT
 
-awk -F= -v key="${tag_var}" -v value="${sha}" '
+  awk -F= -v key="${tag_var}" -v value="${sha}" '
   $1 == key {
     print key "=" value
     next
@@ -270,35 +320,35 @@ awk -F= -v key="${tag_var}" -v value="${sha}" '
   { print }
 ' "${DEPLOY_ENV}" >"${candidate}"
 
-# 실제 Container 변경 전 후보 Compose 설정의 완전한 해석 확인.
-compose "${candidate}" config --quiet
+  # 실제 Container 변경 전 후보 Compose 설정의 완전한 해석 확인.
+  compose "${candidate}" config --quiet
 
-if [[ "${service}" == "rule-service" ]]; then
-  deploy_rule_service || exit 1
-else
-  if ! compose "${candidate}" pull "${service}"; then
-    echo "새 이미지 pull 실패. 기존 컨테이너 유지" >&2
-    exit 1
+  if [[ "${service}" == "rule-service" ]]; then
+    deploy_rule_service || exit 1
+  else
+    if ! compose "${candidate}" pull "${service}"; then
+      echo "새 이미지 pull 실패. 기존 컨테이너 유지" >&2
+      exit 1
+    fi
+
+    start_service "${candidate}" "${service}" || fail_and_rollback "컨테이너 healthcheck 실패"
+
+    if [[ "${service}" == "discovery-service" ]]; then
+      wait_discovery_clients "${candidate}" || fail_and_rollback "Discovery Client 재등록 실패"
+    fi
   fi
 
-  start_service "${candidate}" "${service}" || fail_and_rollback "컨테이너 healthcheck 실패"
+  reload_nginx "${candidate}" || fail_and_rollback "Nginx reload 실패"
+  "${SMOKE_SCRIPT}" "${base_url}" || fail_and_rollback "Smoke Test 실패"
 
-  if [[ "${service}" == "discovery-service" ]]; then
-    wait_discovery_clients "${candidate}" || fail_and_rollback "Discovery Client 재등록 실패"
+  # 모든 검증 성공 이후 후보 상태의 확정.
+  # 동일 File System 내부 mv를 이용한 중간 내용 노출 방지.
+  if ! mv -f "${candidate}" "${DEPLOY_ENV}"; then
+    fail_and_rollback "deploy.env 갱신 실패"
   fi
-fi
+  candidate=""
 
-reload_nginx "${candidate}" || fail_and_rollback "Nginx reload 실패"
-"${SMOKE_SCRIPT}" "${base_url}" || fail_and_rollback "Smoke Test 실패"
-
-# 모든 검증 성공 이후 후보 상태의 확정.
-# 동일 File System 내부 mv를 이용한 중간 내용 노출 방지.
-if ! mv -f "${candidate}" "${DEPLOY_ENV}"; then
-  fail_and_rollback "deploy.env 갱신 실패"
-fi
-candidate=""
-
-echo "배포 완료: ${service} (${sha})"
+  echo "배포 완료: ${service} (${sha})"
 }
 
 # 테스트 source 시 main 미실행, 직접 실행 시에만 실제 배포 시작.

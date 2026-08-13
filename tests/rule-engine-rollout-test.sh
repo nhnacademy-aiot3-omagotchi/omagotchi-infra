@@ -48,7 +48,7 @@ rule_engine_resolve_pair() {
   local index
 
   index="$(<"${pair_index_file}")"
-  (( index < ${#pair_sequence[@]} )) || return 1
+  ((index < ${#pair_sequence[@]})) || return 1
   printf '%s\n' "${pair_sequence[index]}"
   printf '%s\n' "$((index + 1))" >"${pair_index_file}"
 }
@@ -120,21 +120,29 @@ ps_failure=""
 infra_calls=()
 infra_cluster_pair="${RULE_ENGINE_A} ${RULE_ENGINE_B}"
 ps_calls_file="${TEST_TMP_DIR}/ps-calls"
+unexpected_calls_file="${TEST_TMP_DIR}/unexpected-calls"
+: >"${unexpected_calls_file}"
 
 rule_compose() {
   local env_file="$1"
   shift
 
-  [[ "$1" == "ps" ]] || fail "예상하지 않은 Compose 호출: $*"
+  if [[ "$1" != "ps" ]]; then
+    printf 'unexpected:%s\n' "$*" >>"${unexpected_calls_file}"
+    return 2
+  fi
   local service="${*: -1}"
   printf '%s\n' "${service}" >>"${ps_calls_file}"
 
   [[ "${service}" != "${ps_failure}" ]] || return 2
 
   case "${service}" in
-    "${RULE_ENGINE_A}") (( running_a == 1 )) && printf 'container-a\n' ;;
-    "${RULE_ENGINE_B}") (( running_b == 1 )) && printf 'container-b\n' ;;
-    *) return 2 ;;
+  "${RULE_ENGINE_A}") ((running_a == 1)) && printf 'container-a\n' ;;
+  "${RULE_ENGINE_B}") ((running_b == 1)) && printf 'container-b\n' ;;
+  *)
+    printf 'unknown-service:%s\n' "${service}" >>"${unexpected_calls_file}"
+    return 2
+    ;;
   esac
 
   return 0
@@ -147,8 +155,8 @@ rule_engine_start() {
   infra_calls+=("start:${env_file}:${service}")
 
   case "${service}" in
-    "${RULE_ENGINE_A}") running_a=1 ;;
-    "${RULE_ENGINE_B}") running_b=1 ;;
+  "${RULE_ENGINE_A}") running_a=1 ;;
+  "${RULE_ENGINE_B}") running_b=1 ;;
   esac
 }
 
@@ -220,6 +228,8 @@ calls=()
 cluster_call_count=0
 initial_pair="${RULE_ENGINE_B} ${RULE_ENGINE_A}"
 pair_after_first="${RULE_ENGINE_A} ${RULE_ENGINE_B}"
+service_running_a=1
+service_running_b=1
 
 wait_rule_engine_cluster() {
   local env_file="$1"
@@ -227,7 +237,7 @@ wait_rule_engine_cluster() {
   calls+=("cluster:${env_file}")
   cluster_call_count=$((cluster_call_count + 1))
 
-  if (( cluster_call_count == 1 )); then
+  if ((cluster_call_count == 1)); then
     RULE_ENGINE_STABLE_PAIR="${initial_pair}"
   else
     RULE_ENGINE_STABLE_PAIR="${pair_after_first}"
@@ -248,6 +258,16 @@ wait_rule_engine_registered() {
   calls+=("registered:$1:$2")
 }
 
+rule_engine_service_running() {
+  calls+=("running:$1:$2")
+
+  case "$2" in
+  "${RULE_ENGINE_A}") ((service_running_a == 1)) ;;
+  "${RULE_ENGINE_B}") ((service_running_b == 1)) ;;
+  *) return 2 ;;
+  esac
+}
+
 fail_and_rollback() {
   fail "정상 롤아웃에서 rollback이 호출됐습니다: $1"
 }
@@ -261,7 +281,7 @@ rule_second_service=""
 deploy_rule_service
 
 assert_equals \
-  "cluster:deployed.env compose:candidate.env:pull rule-engine-a rule-engine-b start:candidate.env:rule-engine-a registered:candidate.env:engine-a cluster:candidate.env start:candidate.env:rule-engine-b registered:candidate.env:engine-b cluster:candidate.env" \
+  "running:deployed.env:rule-engine-a running:deployed.env:rule-engine-b cluster:deployed.env compose:candidate.env:pull rule-engine-a rule-engine-b start:candidate.env:rule-engine-a registered:candidate.env:engine-a cluster:candidate.env start:candidate.env:rule-engine-b registered:candidate.env:engine-b cluster:candidate.env" \
   "${calls[*]}" \
   "역할 교체가 발생한 Rule A/B 롤아웃 순서 오류"
 
@@ -279,9 +299,25 @@ rule_second_service=""
 deploy_rule_service
 
 assert_equals \
-  "cluster:deployed.env compose:candidate.env:pull rule-engine-a rule-engine-b start:candidate.env:rule-engine-b registered:candidate.env:engine-b cluster:candidate.env start:candidate.env:rule-engine-a registered:candidate.env:engine-a cluster:candidate.env" \
+  "running:deployed.env:rule-engine-a running:deployed.env:rule-engine-b cluster:deployed.env compose:candidate.env:pull rule-engine-a rule-engine-b start:candidate.env:rule-engine-b registered:candidate.env:engine-b cluster:candidate.env start:candidate.env:rule-engine-a registered:candidate.env:engine-a cluster:candidate.env" \
   "${calls[*]}" \
   "역할이 유지된 Rule A/B 롤아웃 순서 오류"
+
+calls=()
+service_running_a=1
+service_running_b=0
+rule_stage="none"
+rule_first_service=""
+rule_second_service=""
+
+if deploy_rule_service >/dev/null 2>&1; then
+  fail "Rule Engine 단일 인스턴스 상태에서 서비스별 배포가 허용되었습니다."
+fi
+assert_equals \
+  "running:deployed.env:rule-engine-a running:deployed.env:rule-engine-b" \
+  "${calls[*]}" \
+  "Rule Engine 실행 상태 사전 검증 오류"
+service_running_b=1
 
 restore_calls=()
 restore_failure=""
@@ -326,5 +362,8 @@ assert_equals \
   "restore:${RULE_ENGINE_B} restore:${RULE_ENGINE_A} cluster:${DEPLOY_ENV}" \
   "${restore_calls[*]}" \
   "2차 인스턴스 복구 실패 후 1차 인스턴스 복구가 누락되었습니다."
+
+[[ ! -s "${unexpected_calls_file}" ]] ||
+  fail "예상하지 않은 Compose 호출: $(<"${unexpected_calls_file}")"
 
 echo "Rule Engine rollout tests passed"

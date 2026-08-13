@@ -12,22 +12,54 @@ RULE_ENGINE_B="rule-engine-b"
 RULE_ENGINE_WAIT_ATTEMPTS="${RULE_ENGINE_WAIT_ATTEMPTS:-36}"
 RULE_ENGINE_WAIT_INTERVAL_SECONDS="${RULE_ENGINE_WAIT_INTERVAL_SECONDS:-5}"
 RULE_ENGINE_STABLE_CHECKS="${RULE_ENGINE_STABLE_CHECKS:-3}"
+
+# 환경변수 오입력으로 대기·안정화 검증이 무력화되는 상태 차단.
+rule_engine_validate_wait_config() {
+  if [[ ! "${RULE_ENGINE_WAIT_ATTEMPTS}" =~ ^[0-9]+$ ]] ||
+    ((RULE_ENGINE_WAIT_ATTEMPTS < 1)); then
+    echo "RULE_ENGINE_WAIT_ATTEMPTS는 1 이상의 정수여야 합니다." >&2
+    return 1
+  fi
+
+  if [[ ! "${RULE_ENGINE_WAIT_INTERVAL_SECONDS}" =~ ^[0-9]+$ ]]; then
+    echo "RULE_ENGINE_WAIT_INTERVAL_SECONDS는 0 이상의 정수여야 합니다." >&2
+    return 1
+  fi
+
+  if [[ ! "${RULE_ENGINE_STABLE_CHECKS}" =~ ^[0-9]+$ ]] ||
+    ((RULE_ENGINE_STABLE_CHECKS < 1)); then
+    echo "RULE_ENGINE_STABLE_CHECKS는 1 이상의 정수여야 합니다." >&2
+    return 1
+  fi
+
+  if ((RULE_ENGINE_STABLE_CHECKS > RULE_ENGINE_WAIT_ATTEMPTS)); then
+    echo "RULE_ENGINE_STABLE_CHECKS는 RULE_ENGINE_WAIT_ATTEMPTS 이하여야 합니다." >&2
+    return 1
+  fi
+}
+
+rule_engine_validate_wait_config || {
+  if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    exit 1
+  fi
+  return 1
+}
 # 함수 결과 공유용 전역 상태.
 # 상태 확인 함수의 진행 로그와 계산 결과를 함께 보존하기 위한 stdout 반환 미사용.
-RULE_ENGINE_STABLE_PAIR=""       # "ACTIVE 서비스 STANDBY 서비스"
-RULE_ENGINE_ROLLOUT_FIRST=""     # 먼저 교체할 물리 Compose 서비스
-RULE_ENGINE_ROLLOUT_SECOND=""    # 나중에 교체할 물리 Compose 서비스
+RULE_ENGINE_STABLE_PAIR=""    # "ACTIVE 서비스 STANDBY 서비스"
+RULE_ENGINE_ROLLOUT_FIRST=""  # 먼저 교체할 물리 Compose 서비스
+RULE_ENGINE_ROLLOUT_SECOND="" # 나중에 교체할 물리 Compose 서비스
 
 rule_engine_other_service() {
   local service="$1"
 
   case "${service}" in
-    "${RULE_ENGINE_A}") printf '%s\n' "${RULE_ENGINE_B}" ;;
-    "${RULE_ENGINE_B}") printf '%s\n' "${RULE_ENGINE_A}" ;;
-    *)
-      echo "알 수 없는 Rule Engine 서비스: ${service}" >&2
-      return 1
-      ;;
+  "${RULE_ENGINE_A}") printf '%s\n' "${RULE_ENGINE_B}" ;;
+  "${RULE_ENGINE_B}") printf '%s\n' "${RULE_ENGINE_A}" ;;
+  *)
+    echo "알 수 없는 Rule Engine 서비스: ${service}" >&2
+    return 1
+    ;;
   esac
 }
 
@@ -97,7 +129,7 @@ wait_eureka_application() {
       return 0
     fi
 
-    if (( attempt < RULE_ENGINE_WAIT_ATTEMPTS )); then
+    if ((attempt < RULE_ENGINE_WAIT_ATTEMPTS)); then
       sleep "${RULE_ENGINE_WAIT_INTERVAL_SECONDS}"
     fi
   done
@@ -117,7 +149,7 @@ wait_rule_engine_registered() {
       return 0
     fi
 
-    if (( attempt < RULE_ENGINE_WAIT_ATTEMPTS )); then
+    if ((attempt < RULE_ENGINE_WAIT_ATTEMPTS)); then
       sleep "${RULE_ENGINE_WAIT_INTERVAL_SECONDS}"
     fi
   done
@@ -174,13 +206,13 @@ wait_rule_engine_pair() {
       stable_count=0
     fi
 
-    if (( stable_count >= RULE_ENGINE_STABLE_CHECKS )); then
+    if ((stable_count >= RULE_ENGINE_STABLE_CHECKS)); then
       RULE_ENGINE_STABLE_PAIR="${pair}"
       echo "Rule Engine 역할 안정화 확인: ${pair}"
       return 0
     fi
 
-    if (( attempt < RULE_ENGINE_WAIT_ATTEMPTS )); then
+    if ((attempt < RULE_ENGINE_WAIT_ATTEMPTS)); then
       sleep "${RULE_ENGINE_WAIT_INTERVAL_SECONDS}"
     fi
   done
@@ -208,25 +240,25 @@ rule_engine_prepare_rollout() {
   RULE_ENGINE_ROLLOUT_SECOND=""
 
   case "${engine_a_running}:${engine_b_running}" in
-    0:0)
-      RULE_ENGINE_ROLLOUT_FIRST="${RULE_ENGINE_A}"
-      ;;
-    1:0)
-      RULE_ENGINE_ROLLOUT_FIRST="${RULE_ENGINE_B}"
-      ;;
-    0:1)
-      RULE_ENGINE_ROLLOUT_FIRST="${RULE_ENGINE_A}"
-      ;;
-    1:1)
-      wait_rule_engine_cluster "${env_file}" || return 1
-      read -r initial_active initial_standby <<<"${RULE_ENGINE_STABLE_PAIR}"
-      [[ -n "${initial_active}" && -n "${initial_standby}" ]] || return 1
-      RULE_ENGINE_ROLLOUT_FIRST="${initial_standby}"
-      ;;
-    *)
-      echo "Rule Engine 실행 상태가 올바르지 않습니다: engine-a=${engine_a_running}, engine-b=${engine_b_running}" >&2
-      return 1
-      ;;
+  0:0)
+    RULE_ENGINE_ROLLOUT_FIRST="${RULE_ENGINE_A}"
+    ;;
+  1:0)
+    RULE_ENGINE_ROLLOUT_FIRST="${RULE_ENGINE_B}"
+    ;;
+  0:1)
+    RULE_ENGINE_ROLLOUT_FIRST="${RULE_ENGINE_A}"
+    ;;
+  1:1)
+    wait_rule_engine_cluster "${env_file}" || return 1
+    read -r initial_active initial_standby <<<"${RULE_ENGINE_STABLE_PAIR}"
+    [[ -n "${initial_active}" && -n "${initial_standby}" ]] || return 1
+    RULE_ENGINE_ROLLOUT_FIRST="${initial_standby}"
+    ;;
+  *)
+    echo "Rule Engine 실행 상태가 올바르지 않습니다: engine-a=${engine_a_running}, engine-b=${engine_b_running}" >&2
+    return 1
+    ;;
   esac
 
   # 1차 대상의 반대편을 2차 대상으로 고정.
@@ -265,14 +297,14 @@ rollout_rule_engine_infra() {
     engine_a_running=1
   else
     running_status=$?
-    (( running_status == 1 )) || return "${running_status}"
+    ((running_status == 1)) || return "${running_status}"
   fi
 
   if rule_engine_service_running "${env_file}" "${RULE_ENGINE_B}"; then
     engine_b_running=1
   else
     running_status=$?
-    (( running_status == 1 )) || return "${running_status}"
+    ((running_status == 1)) || return "${running_status}"
   fi
 
   running_count=$((engine_a_running + engine_b_running))
@@ -286,7 +318,7 @@ rollout_rule_engine_infra() {
 
   # 기존 엔진이 하나 이상인 경우의 중간 exactly-one-ACTIVE 확인.
   # 0대 초기 기동의 첫 엔진만 존재하는 시점에는 Pair 검증 불가.
-  if (( running_count > 0 )); then
+  if ((running_count > 0)); then
     wait_rule_engine_cluster "${env_file}" || return 1
   fi
 

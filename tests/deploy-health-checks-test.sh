@@ -9,6 +9,19 @@ fail() {
   exit 1
 }
 
+for invalid_config in \
+  "RULE_ENGINE_WAIT_ATTEMPTS=0" \
+  "RULE_ENGINE_WAIT_ATTEMPTS=invalid" \
+  "RULE_ENGINE_WAIT_INTERVAL_SECONDS=-1" \
+  "RULE_ENGINE_STABLE_CHECKS=0" \
+  "RULE_ENGINE_STABLE_CHECKS=37"; do
+  # shellcheck disable=SC2016 # $1은 자식 Bash의 positional parameter
+  if env ${invalid_config} bash -c 'source "$1"' _ "${INFRA_DIR}/scripts/rule-engine.sh" \
+    >/dev/null 2>&1; then
+    fail "잘못된 Rule Engine 대기 설정이 허용되었습니다: ${invalid_config}"
+  fi
+done
+
 # 동적 절대 경로 사용. 실제 파일은 아래 source로 직접 로드.
 # shellcheck disable=SC1091
 source "${INFRA_DIR}/scripts/rule-engine.sh"
@@ -41,9 +54,9 @@ for fail_stage in engine-a engine-b pair; do
   fi
 
   case "${fail_stage}" in
-    engine-a) expected="registered:engine-a" ;;
-    engine-b) expected="registered:engine-a registered:engine-b" ;;
-    pair) expected="registered:engine-a registered:engine-b pair" ;;
+  engine-a) expected="registered:engine-a" ;;
+  engine-b) expected="registered:engine-a registered:engine-b" ;;
+  pair) expected="registered:engine-a registered:engine-b pair" ;;
   esac
 
   [[ "${calls[*]}" == "${expected}" ]] ||
@@ -89,21 +102,21 @@ for fail_stage in \
   fi
 
   case "${fail_stage}" in
-    FRONTEND)
-      expected="eureka:FRONTEND"
-      ;;
-    GATEWAY-SERVICE)
-      expected="eureka:FRONTEND eureka:GATEWAY-SERVICE"
-      ;;
-    IDENTITY-SERVICE)
-      expected="eureka:FRONTEND eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE"
-      ;;
-    LEARNING-SERVICE)
-      expected="eureka:FRONTEND eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE eureka:LEARNING-SERVICE"
-      ;;
-    rule-cluster)
-      expected="eureka:FRONTEND eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE eureka:LEARNING-SERVICE rule-cluster"
-      ;;
+  FRONTEND)
+    expected="eureka:FRONTEND"
+    ;;
+  GATEWAY-SERVICE)
+    expected="eureka:FRONTEND eureka:GATEWAY-SERVICE"
+    ;;
+  IDENTITY-SERVICE)
+    expected="eureka:FRONTEND eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE"
+    ;;
+  LEARNING-SERVICE)
+    expected="eureka:FRONTEND eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE eureka:LEARNING-SERVICE"
+    ;;
+  rule-cluster)
+    expected="eureka:FRONTEND eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE eureka:LEARNING-SERVICE rule-cluster"
+    ;;
   esac
 
   [[ "${calls[*]}" == "${expected}" ]] ||
@@ -113,8 +126,7 @@ done
 fail_stage="none"
 calls=()
 wait_discovery_clients fixture.env >/dev/null
-[[ "${calls[*]}" == \
-  "eureka:FRONTEND eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE eureka:LEARNING-SERVICE rule-cluster" ]] ||
+[[ "${calls[*]}" == "eureka:FRONTEND eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE eureka:LEARNING-SERVICE rule-cluster" ]] ||
   fail "Discovery 정상 검사 순서가 올바르지 않습니다: ${calls[*]}"
 
 echo "Deploy health check failure propagation tests passed"
