@@ -1,8 +1,17 @@
 name: omagotchi
 
+# 중앙 로그 수집 도입 전의 Host Disk 보호 기준.
+# 각 Container의 stdout·stderr를 파일당 10MB, 최대 3개로 순환 보관.
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   discovery-service:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-discovery-service:${DISCOVERY_IMAGE_TAG:?DISCOVERY_IMAGE_TAG is required}
+    logging: *default-logging
     environment:
       SERVER_PORT: "8761"
     expose:
@@ -22,6 +31,7 @@ services:
 
   identity-service:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-identity-service:${IDENTITY_IMAGE_TAG:?IDENTITY_IMAGE_TAG is required}
+    logging: *default-logging
     environment:
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
@@ -62,6 +72,7 @@ services:
 
   learning-service:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-learning-service:${LEARNING_IMAGE_TAG:?LEARNING_IMAGE_TAG is required}
+    logging: *default-logging
     environment:
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
@@ -119,6 +130,7 @@ services:
   # Eureka에서 rule-service를 조회해 lb://rule-service로 전달
   gateway-service:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-gateway-service:${GATEWAY_IMAGE_TAG:?GATEWAY_IMAGE_TAG is required}
+    logging: *default-logging
     environment:
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
@@ -155,6 +167,7 @@ services:
 
   rule-engine-a:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-rule-service:${RULE_IMAGE_TAG:?RULE_IMAGE_TAG is required}
+    logging: *default-logging
     environment:
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
@@ -205,6 +218,7 @@ services:
 
   rule-engine-b:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-rule-service:${RULE_IMAGE_TAG:?RULE_IMAGE_TAG is required}
+    logging: *default-logging
     environment:
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
@@ -256,6 +270,7 @@ services:
   frontend:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-frontend:${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG is required}
     container_name: omagotchi-frontend
+    logging: *default-logging
     environment:
       SERVER_PORT: "8080"
 
@@ -303,6 +318,7 @@ services:
   nginx:
     image: nginx:1.30.3-alpine
     container_name: omagotchi-nginx
+    logging: *default-logging
     expose:
       - "80"
     volumes:
@@ -329,6 +345,7 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: omagotchi-cloudflared
+    logging: *default-logging
 
     # 컨테이너 자체 자동 업데이트를 끄고,
     # 이후 docker compose pull/recreate 방식으로 이미지 갱신

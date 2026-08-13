@@ -9,6 +9,7 @@
 - 이미지 저장소: GHCR
 - 이미지 식별자: 40자리 Commit SHA
 - 운영 구성: Docker Compose
+- Container Log: `json-file`, Container별 `10MB × 3개` 순환 보관
 - Runtime Secret: 저장소 외부 `secrets/prod.env`
 - 배포 상태: `infra/deploy.env`
 - JWT Private Key: Identity 전용
@@ -123,6 +124,7 @@ feature → dev PR → dev → main PR → Build·Publish
 ## 운영 확인
 
 - 모든 컨테이너 Healthcheck 통과
+- 모든 컨테이너 Log Rotation 적용
 - Discovery의 Frontend·Identity·Learning·Gateway 등록
 - Discovery의 `engine-a`·`engine-b` 등록
 - Rule 역할: 정확히 하나의 `ACTIVE`, 하나의 `STANDBY`
