@@ -1,8 +1,17 @@
 name: omagotchi
 
+# 중앙 로그 수집 도입 전의 Host Disk 보호 기준.
+# 각 Container의 stdout·stderr를 파일당 10MB, 최대 3개로 순환 보관.
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   discovery-service:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-discovery-service:${DISCOVERY_IMAGE_TAG:?DISCOVERY_IMAGE_TAG is required}
+    logging: *default-logging
     environment:
       SERVER_PORT: "8761"
     expose:
@@ -20,18 +29,128 @@ services:
       - omagotchi-net
     restart: unless-stopped
 
+  identity-service:
+    image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-identity-service:${IDENTITY_IMAGE_TAG:?IDENTITY_IMAGE_TAG is required}
+    logging: *default-logging
+    environment:
+      SPRING_PROFILES_ACTIVE: "prod"
+      SERVER_PORT: "8080"
+
+      DB_URL: "${IDENTITY_DB_URL:?IDENTITY_DB_URL is required}"
+      DB_USERNAME: "${IDENTITY_DB_USERNAME:?IDENTITY_DB_USERNAME is required}"
+      DB_PASSWORD: "${IDENTITY_DB_PASSWORD:?IDENTITY_DB_PASSWORD is required}"
+
+      EUREKA_ENABLED: "true"
+      EUREKA_URL: "http://discovery-service:8761/eureka/"
+
+      FRONTEND_USERNAME: "${FRONTEND_USERNAME:?FRONTEND_USERNAME is required}"
+      FRONTEND_PASSWORD: "${FRONTEND_PASSWORD:?FRONTEND_PASSWORD is required}"
+
+      JWT_ISSUER: "${JWT_ISSUER:?JWT_ISSUER is required}"
+      JWT_AUDIENCE: "${JWT_AUDIENCE:?JWT_AUDIENCE is required}"
+      JWT_ACCESS_TOKEN_TTL: "${JWT_ACCESS_TOKEN_TTL:-PT15M}"
+      JWT_PUBLIC_KEY_LOCATION: "file:/run/secrets/jwt-public.pem"
+      JWT_PRIVATE_KEY_LOCATION: "file:/run/secrets/jwt-private.pem"
+      REFRESH_TOKEN_TTL: "${REFRESH_TOKEN_TTL:-P7D}"
+    expose:
+      - "8080"
+    volumes:
+      - ../secrets/jwt-public.pem:/run/secrets/jwt-public.pem:ro
+      - ../secrets/jwt-private.pem:/run/secrets/jwt-private.pem:ro
+    depends_on:
+      discovery-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - omagotchi-net
+    restart: unless-stopped
+
+  learning-service:
+    image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-learning-service:${LEARNING_IMAGE_TAG:?LEARNING_IMAGE_TAG is required}
+    logging: *default-logging
+    environment:
+      SPRING_PROFILES_ACTIVE: "prod"
+      SERVER_PORT: "8080"
+
+      DB_URL: "${LEARNING_DB_URL:?LEARNING_DB_URL is required}"
+      DB_USERNAME: "${LEARNING_DB_USERNAME:?LEARNING_DB_USERNAME is required}"
+      DB_PASSWORD: "${LEARNING_DB_PASSWORD:?LEARNING_DB_PASSWORD is required}"
+
+      REDIS_HOST: "${LEARNING_REDIS_HOST:?LEARNING_REDIS_HOST is required}"
+      REDIS_PORT: "${LEARNING_REDIS_PORT:-6379}"
+      REDIS_DATABASE: "${LEARNING_REDIS_DATABASE:?LEARNING_REDIS_DATABASE is required}"
+      REDIS_USERNAME: "${LEARNING_REDIS_USERNAME:-}"
+      REDIS_PASSWORD: "${LEARNING_REDIS_PASSWORD:?LEARNING_REDIS_PASSWORD is required}"
+      REDIS_CONNECT_TIMEOUT: "1s"
+      REDIS_COMMAND_TIMEOUT: "2s"
+      REDIS_SSL_ENABLED: "${LEARNING_REDIS_SSL_ENABLED:-true}"
+
+      RABBITMQ_HOST: "${RABBITMQ_HOST:?RABBITMQ_HOST is required}"
+      RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
+      RABBITMQ_USERNAME: "${RABBITMQ_USERNAME:?RABBITMQ_USERNAME is required}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}"
+
+      EUREKA_ENABLED: "true"
+      EUREKA_URL: "http://discovery-service:8761/eureka/"
+
+      JWT_ISSUER: "${JWT_ISSUER:?JWT_ISSUER is required}"
+      JWT_AUDIENCE: "${JWT_AUDIENCE:?JWT_AUDIENCE is required}"
+      JWT_PUBLIC_KEY_LOCATION: "file:/run/secrets/jwt-public.pem"
+
+      TIMER_MAX_DURATION: "${TIMER_MAX_DURATION:-PT12H}"
+      TELEGRAM_BOT_USERNAME: "${TELEGRAM_BOT_USERNAME:?TELEGRAM_BOT_USERNAME is required}"
+      TELEGRAM_LINK_TOKEN_TTL: "${TELEGRAM_LINK_TOKEN_TTL:-PT10M}"
+      COMMUNITY_ATTACHMENT_STORAGE_ROOT: "/var/lib/omagotchi/community-attachments"
+      COMMUNITY_ATTACHMENT_MAX_FILE_SIZE: "${COMMUNITY_ATTACHMENT_MAX_FILE_SIZE:-5MB}"
+      COMMUNITY_ATTACHMENT_MAX_COUNT: "${COMMUNITY_ATTACHMENT_MAX_COUNT:-5}"
+      REALTIME_PRESENCE_SESSION_TTL: "${REALTIME_PRESENCE_SESSION_TTL:-60s}"
+    expose:
+      - "8080"
+    volumes:
+      - ../secrets/jwt-public.pem:/run/secrets/jwt-public.pem:ro
+      - learning-community-attachments:/var/lib/omagotchi/community-attachments
+    depends_on:
+      discovery-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    networks:
+      - omagotchi-net
+    restart: unless-stopped
+
   # 외부 API 요청의 단일 진입점
   # Eureka에서 rule-service를 조회해 lb://rule-service로 전달
   gateway-service:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-gateway-service:${GATEWAY_IMAGE_TAG:?GATEWAY_IMAGE_TAG is required}
+    logging: *default-logging
     environment:
+      SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
 
       # 컨테이너 안의 localhost는 자기 자신이므로
       # Eureka에는 Compose 서비스 이름으로 접근해야 함
       EUREKA_URL: "http://discovery-service:8761/eureka/"
+
+      IDENTITY_SERVICE_URI: "lb://identity-service"
+      LEARNING_SERVICE_URI: "lb://learning-service"
+      RULE_SERVICE_URI: "lb://rule-service"
+
+      JWT_ISSUER: "${JWT_ISSUER:?JWT_ISSUER is required}"
+      JWT_AUDIENCE: "${JWT_AUDIENCE:?JWT_AUDIENCE is required}"
+      JWT_PUBLIC_KEY_LOCATION: "file:/run/secrets/jwt-public.pem"
     expose:
       - "8080"
+    volumes:
+      - ../secrets/jwt-public.pem:/run/secrets/jwt-public.pem:ro
     depends_on:
       discovery-service:
         # 컨테이너 생성만 기다리는 것이 아니라
@@ -47,18 +166,97 @@ services:
       - omagotchi-net
     restart: unless-stopped
 
-  rule-service:
+  rule-engine-a:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-rule-service:${RULE_IMAGE_TAG:?RULE_IMAGE_TAG is required}
+    logging: *default-logging
     environment:
-      # 로컬 실행의 기본값은 8081이지만
-      # Compose에서는 환경 변수로 컨테이너 내부 포트를 8080으로 변경
-      # 컨테이너마다 독립적인 네트워크 공간이 있기 때문
+      SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
+      CORE_BASE_URL: "http://learning-service:8080"
+
+      EUREKA_ENABLED: "true"
       EUREKA_URL: "http://discovery-service:8761/eureka/"
+
+      ENGINE_ID: "engine-a"
+      ENGINE_PRIORITY: "1"
+      INTERNAL_SHARED_SECRET: "${INTERNAL_SHARED_SECRET:?INTERNAL_SHARED_SECRET is required}"
+
+      JWT_ISSUER: "${JWT_ISSUER:?JWT_ISSUER is required}"
+      JWT_AUDIENCE: "${JWT_AUDIENCE:?JWT_AUDIENCE is required}"
+      JWT_PUBLIC_KEY_LOCATION: "file:/run/secrets/jwt-public.pem"
+
+      SENSOR_BROKER_URL: "${SENSOR_BROKER_URL:?SENSOR_BROKER_URL is required}"
+      SENSOR_CLIENT_ID: "rule-engine-a"
+      SENSOR_USERNAME: "${SENSOR_USERNAME:-}"
+      SENSOR_PASSWORD: "${SENSOR_PASSWORD:-}"
+
+      RABBITMQ_HOST: "${RABBITMQ_HOST:?RABBITMQ_HOST is required}"
+      RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
+      RABBITMQ_USERNAME: "${RABBITMQ_USERNAME:?RABBITMQ_USERNAME is required}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}"
+
+      INFLUXDB_URL: "${INFLUXDB_URL:?INFLUXDB_URL is required}"
+      INFLUXDB_TOKEN: "${INFLUXDB_TOKEN:?INFLUXDB_TOKEN is required}"
+      INFLUXDB_ORG_ID: "${INFLUXDB_ORG_ID:?INFLUXDB_ORG_ID is required}"
     expose:
       - "8080"
+    volumes:
+      - ../secrets/jwt-public.pem:/run/secrets/jwt-public.pem:ro
     depends_on:
       discovery-service:
+        condition: service_healthy
+      learning-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - omagotchi-net
+    restart: unless-stopped
+
+  rule-engine-b:
+    image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-rule-service:${RULE_IMAGE_TAG:?RULE_IMAGE_TAG is required}
+    logging: *default-logging
+    environment:
+      SPRING_PROFILES_ACTIVE: "prod"
+      SERVER_PORT: "8080"
+      CORE_BASE_URL: "http://learning-service:8080"
+
+      EUREKA_ENABLED: "true"
+      EUREKA_URL: "http://discovery-service:8761/eureka/"
+
+      ENGINE_ID: "engine-b"
+      ENGINE_PRIORITY: "2"
+      INTERNAL_SHARED_SECRET: "${INTERNAL_SHARED_SECRET:?INTERNAL_SHARED_SECRET is required}"
+
+      JWT_ISSUER: "${JWT_ISSUER:?JWT_ISSUER is required}"
+      JWT_AUDIENCE: "${JWT_AUDIENCE:?JWT_AUDIENCE is required}"
+      JWT_PUBLIC_KEY_LOCATION: "file:/run/secrets/jwt-public.pem"
+
+      SENSOR_BROKER_URL: "${SENSOR_BROKER_URL:?SENSOR_BROKER_URL is required}"
+      SENSOR_CLIENT_ID: "rule-engine-b"
+      SENSOR_USERNAME: "${SENSOR_USERNAME:-}"
+      SENSOR_PASSWORD: "${SENSOR_PASSWORD:-}"
+
+      RABBITMQ_HOST: "${RABBITMQ_HOST:?RABBITMQ_HOST is required}"
+      RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
+      RABBITMQ_USERNAME: "${RABBITMQ_USERNAME:?RABBITMQ_USERNAME is required}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}"
+
+      INFLUXDB_URL: "${INFLUXDB_URL:?INFLUXDB_URL is required}"
+      INFLUXDB_TOKEN: "${INFLUXDB_TOKEN:?INFLUXDB_TOKEN is required}"
+      INFLUXDB_ORG_ID: "${INFLUXDB_ORG_ID:?INFLUXDB_ORG_ID is required}"
+    expose:
+      - "8080"
+    volumes:
+      - ../secrets/jwt-public.pem:/run/secrets/jwt-public.pem:ro
+    depends_on:
+      discovery-service:
+        condition: service_healthy
+      learning-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/actuator/health"]
@@ -73,8 +271,36 @@ services:
   frontend:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-frontend:${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG is required}
     container_name: omagotchi-frontend
+    logging: *default-logging
     environment:
       SERVER_PORT: "8080"
+
+      # Browser Session Cookie와 만료 정책
+      SESSION_COOKIE_NAME: "OMAGOTCHI_SESSION"
+      SESSION_COOKIE_SECURE: "true"
+      SESSION_TIMEOUT: "PT30M"
+
+      # 외부 Redis 기반 Browser Session 저장소
+      SESSION_REDIS_HOST: "${SESSION_REDIS_HOST:?SESSION_REDIS_HOST is required}"
+      SESSION_REDIS_PORT: "${SESSION_REDIS_PORT:-6379}"
+      SESSION_REDIS_DATABASE: "${SESSION_REDIS_DATABASE:?SESSION_REDIS_DATABASE is required}"
+      SESSION_REDIS_USERNAME: "${SESSION_REDIS_USERNAME:-}"
+      SESSION_REDIS_PASSWORD: "${SESSION_REDIS_PASSWORD:?SESSION_REDIS_PASSWORD is required}"
+      SESSION_REDIS_CONNECT_TIMEOUT: "1s"
+      SESSION_REDIS_COMMAND_TIMEOUT: "2s"
+      SESSION_REDIS_SSL_ENABLED: "${SESSION_REDIS_SSL_ENABLED:-true}"
+      SESSION_REDIS_NAMESPACE: "omagotchi:frontend:session"
+
+      # 내부 Service 호출의 timeout과 Discovery
+      HTTP_CLIENT_CONNECT_TIMEOUT: "2s"
+      HTTP_CLIENT_READ_TIMEOUT: "5s"
+      IDENTITY_SERVICE_BASE_URL: "lb://identity-service"
+      EUREKA_ENABLED: "true"
+      EUREKA_URL: "http://discovery-service:8761/eureka/"
+
+      # Identity 내부 인증 API의 공유 Frontend Credential
+      FRONTEND_USERNAME: "${FRONTEND_USERNAME:?FRONTEND_USERNAME is required}"
+      FRONTEND_PASSWORD: "${FRONTEND_PASSWORD:?FRONTEND_PASSWORD is required}"
     expose:
       - "8080"
     healthcheck:
@@ -83,6 +309,9 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+    depends_on:
+      discovery-service:
+        condition: service_healthy
     networks:
       - omagotchi-net
     restart: unless-stopped
@@ -91,6 +320,7 @@ services:
   nginx:
     image: nginx:1.30.3-alpine
     container_name: omagotchi-nginx
+    logging: *default-logging
     expose:
       - "80"
     volumes:
@@ -117,6 +347,7 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: omagotchi-cloudflared
+    logging: *default-logging
 
     # 컨테이너 자체 자동 업데이트를 끄고,
     # 이후 docker compose pull/recreate 방식으로 이미지 갱신
@@ -134,3 +365,6 @@ networks:
   # 같은 네트워크의 컨테이너는 서비스 이름과 내부 포트로 통신
   omagotchi-net:
     name: omagotchi-net
+
+volumes:
+  learning-community-attachments:

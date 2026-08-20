@@ -3,10 +3,15 @@ name: Infra PR Check
 on:
   pull_request:
     branches:
+      - dev
       - main
 
 permissions:
   contents: read
+
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -20,12 +25,19 @@ jobs:
 
       - name: Validate shell scripts
         shell: bash
-        run: bash -n scripts/*.sh
+        run: bash -n scripts/*.sh tests/*.sh
+
+      - name: Test deployment scripts
+        shell: bash
+        run: |
+          for test_script in tests/*-test.sh; do
+            "${test_script}"
+          done
 
       - name: Validate Compose configuration
         shell: bash
         run: |
           docker compose \
-            --env-file .env.example \
+            --env-file .env.prod.example \
             --env-file deploy.env.example \
             config --quiet

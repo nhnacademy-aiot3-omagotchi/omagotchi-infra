@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Docker Compose 공통 실행 진입점.
+# - prod.env: Runtime 설정과 Secret의 공급원
+# - deploy.env: 이미지 SHA와 Smoke Test 주소의 공급원
+# - 호출 셸의 export 값: 두 파일의 값을 덮어쓰지 못하도록 제거 대상
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INFRA_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
-# 평소에는 infra/deploy.env와 ../secrets/prod.env 사용
-# 배포 스크립트는 DEPLOY_ENV_FILE만 임시 후보 파일로 바꿔서 사용
+# 기본 파일: infra/deploy.env와 ../secrets/prod.env.
+# 서비스 배포 중 후보 이미지 검증: DEPLOY_ENV_FILE만 임시 파일로 교체.
 DEPLOY_ENV_FILE="${DEPLOY_ENV_FILE:-${INFRA_DIR}/deploy.env}"
 SECRET_ENV_FILE="${SECRET_ENV_FILE:-${INFRA_DIR}/../secrets/prod.env}"
 
@@ -19,36 +24,124 @@ if [[ ! -f "${SECRET_ENV_FILE}" ]]; then
   exit 1
 fi
 
-# deploy.env가 배포 이력에 보관되더라도 Secret이 함께 복사되지 않게 방어
-if grep -Eq '^[[:space:]]*CLOUDFLARED_TOKEN=' "${DEPLOY_ENV_FILE}"; then
-  echo "CLOUDFLARED_TOKEN은 deploy.env가 아니라 prod.env에만 두어야 합니다." >&2
-  exit 1
-fi
+# prod.env 전용 항목.
+# deploy.env 유입 시 Secret과 배포 상태의 책임 혼합으로 간주.
+runtime_keys=(
+  CLOUDFLARED_TOKEN
+  JWT_ISSUER
+  JWT_AUDIENCE
+  JWT_ACCESS_TOKEN_TTL
+  REFRESH_TOKEN_TTL
+  IDENTITY_DB_URL
+  IDENTITY_DB_USERNAME
+  IDENTITY_DB_PASSWORD
+  LEARNING_DB_URL
+  LEARNING_DB_USERNAME
+  LEARNING_DB_PASSWORD
+  LEARNING_REDIS_HOST
+  LEARNING_REDIS_PORT
+  LEARNING_REDIS_DATABASE
+  LEARNING_REDIS_USERNAME
+  LEARNING_REDIS_PASSWORD
+  LEARNING_REDIS_SSL_ENABLED
+  TIMER_MAX_DURATION
+  TELEGRAM_BOT_USERNAME
+  TELEGRAM_LINK_TOKEN_TTL
+  COMMUNITY_ATTACHMENT_MAX_FILE_SIZE
+  COMMUNITY_ATTACHMENT_MAX_COUNT
+  REALTIME_PRESENCE_SESSION_TTL
+  SENSOR_BROKER_URL
+  SENSOR_USERNAME
+  SENSOR_PASSWORD
+  INTERNAL_SHARED_SECRET
+  RABBITMQ_HOST
+  RABBITMQ_PORT
+  RABBITMQ_USERNAME
+  RABBITMQ_PASSWORD
+  INFLUXDB_URL
+  INFLUXDB_TOKEN
+  INFLUXDB_ORG_ID
+  SESSION_REDIS_HOST
+  SESSION_REDIS_PORT
+  SESSION_REDIS_DATABASE
+  SESSION_REDIS_USERNAME
+  SESSION_REDIS_PASSWORD
+  SESSION_REDIS_SSL_ENABLED
+  FRONTEND_USERNAME
+  FRONTEND_PASSWORD
+)
 
-# 이미지 태그는 deploy.env만이 단일 진실 공급원으로
-for key in \
-  DISCOVERY_IMAGE_TAG \
-  GATEWAY_IMAGE_TAG \
-  RULE_IMAGE_TAG \
-  FRONTEND_IMAGE_TAG \
-  SMOKE_BASE_URL; do
+for key in "${runtime_keys[@]}"; do
+  if grep -Eq "^[[:space:]]*${key}=" "${DEPLOY_ENV_FILE}"; then
+    echo "${key}는 deploy.env가 아니라 prod.env에만 두어야 합니다." >&2
+    exit 1
+  fi
+done
+
+# deploy.env 전용 항목.
+# prod.env 유입 시 현재 실행 이미지의 추적 불가 상태로 간주.
+deploy_keys=(
+  DISCOVERY_IMAGE_TAG
+  GATEWAY_IMAGE_TAG
+  IDENTITY_IMAGE_TAG
+  LEARNING_IMAGE_TAG
+  RULE_IMAGE_TAG
+  FRONTEND_IMAGE_TAG
+  SMOKE_BASE_URL
+)
+
+for key in "${deploy_keys[@]}"; do
   if grep -Eq "^[[:space:]]*${key}=" "${SECRET_ENV_FILE}"; then
     echo "${key}는 prod.env가 아니라 deploy.env에 두어야 합니다." >&2
     exit 1
   fi
 done
 
-# 호출한 셸에서 export한 값이 env 파일보다 우선하지 않도록 제거
-unset \
-  CLOUDFLARED_TOKEN \
-  DISCOVERY_IMAGE_TAG \
-  GATEWAY_IMAGE_TAG \
-  RULE_IMAGE_TAG \
-  FRONTEND_IMAGE_TAG \
-  SMOKE_BASE_URL
+# Compose 환경변수 우선순위에 따른 호출 셸 export 값의 혼입 차단.
+unset "${runtime_keys[@]}" "${deploy_keys[@]}"
+
+# Rule 구현 완료 전의 수동 부분 배포 전용 Compose 해석 값.
+# Rule Container를 기동하지 않는 동안에만 Rule 전용 필수 변수의 구문 검증을 통과시킴.
+# 실제 운영 Secret의 대체값이 아니며 Rule 서비스를 대상으로 사용하면 즉시 중단.
+COMPOSE_SKIP_RULE="${COMPOSE_SKIP_RULE:-false}"
+case "${COMPOSE_SKIP_RULE}" in
+true)
+  skip_rule_safe_service_found=false
+  for argument in "$@"; do
+    case "${argument}" in
+    rule-engine-a | rule-engine-b)
+      echo "Rule 제외 Compose 모드에서는 Rule Engine을 실행할 수 없습니다." >&2
+      exit 1
+      ;;
+    discovery-service | frontend | gateway-service | identity-service | learning-service | nginx | cloudflared)
+      skip_rule_safe_service_found=true
+      ;;
+    esac
+  done
+
+  if [[ "${1:-}" == "up" && "${skip_rule_safe_service_found}" != "true" ]]; then
+    echo "Rule 제외 Compose 모드의 up 명령은 기동할 서비스를 명시해야 합니다." >&2
+    exit 1
+  fi
+
+  export RULE_IMAGE_TAG="0000000000000000000000000000000000000000"
+  export SENSOR_BROKER_URL="tcp://skip-rule.invalid:1883"
+  export INTERNAL_SHARED_SECRET="skip-rule-not-used-in-partial-deployment"
+  export INFLUXDB_URL="http://skip-rule.invalid"
+  export INFLUXDB_TOKEN="skip-rule-not-used"
+  export INFLUXDB_ORG_ID="skip-rule-not-used"
+  ;;
+false) ;;
+*)
+  echo "COMPOSE_SKIP_RULE은 true 또는 false여야 합니다." >&2
+  exit 64
+  ;;
+esac
 
 cd "${INFRA_DIR}"
 
+# 검증을 통과한 두 파일만 사용하는 실제 Compose 실행.
+# exec 사용 목적: Wrapper Process를 남기지 않는 신호·종료 코드 전달.
 exec docker compose \
   --env-file "${SECRET_ENV_FILE}" \
   --env-file "${DEPLOY_ENV_FILE}" \
