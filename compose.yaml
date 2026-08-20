@@ -95,6 +95,10 @@ services:
       RABBITMQ_USERNAME: "${RABBITMQ_USERNAME:?RABBITMQ_USERNAME is required}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}"
 
+      INFLUXDB_URL: "${INFLUXDB_URL:?INFLUXDB_URL is required}"
+      INFLUXDB_TOKEN: "${INFLUXDB_TOKEN:?INFLUXDB_TOKEN is required}"
+      INFLUXDB_ORG_ID: "${INFLUXDB_ORG_ID:?INFLUXDB_ORG_ID is required}"
+
       EUREKA_ENABLED: "true"
       EUREKA_URL: "http://discovery-service:8761/eureka/"
 
