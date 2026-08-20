@@ -7,13 +7,18 @@ on:
       - main
     types:
       - opened
+      - closed
 
 permissions: {}
 
 jobs:
   notify:
     name: Notify Telegram
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    if: >-
+      ${{
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.event.action == 'opened' || github.event.pull_request.merged == true)
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
 
@@ -31,14 +36,26 @@ jobs:
 
           message="$(
             jq -r '
-              "🔀 New Pull Request\n\n"
+              (if .action == "opened"
+                then "🔀 New Pull Request"
+                else "✅ Pull Request Merged"
+              end)
+              + "\n\n"
               + .repository.full_name
               + " #"
               + (.pull_request.number | tostring)
               + "\n"
               + .pull_request.title
-              + "\n\nAuthor: @"
+              + "\n\nAuthor: "
               + .pull_request.user.login
+              + "\nAuthor profile: https://github.com/"
+              + .pull_request.user.login
+              + (if .action == "closed"
+                then "\nMerged by: " + .pull_request.merged_by.login
+                  + "\nMerged by profile: https://github.com/"
+                  + .pull_request.merged_by.login
+                else ""
+              end)
               + "\n"
               + .pull_request.html_url
             ' "$GITHUB_EVENT_PATH"
