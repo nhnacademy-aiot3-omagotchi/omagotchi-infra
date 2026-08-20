@@ -128,9 +128,6 @@ true)
   export RULE_IMAGE_TAG="0000000000000000000000000000000000000000"
   export SENSOR_BROKER_URL="tcp://skip-rule.invalid:1883"
   export INTERNAL_SHARED_SECRET="skip-rule-not-used-in-partial-deployment"
-  export INFLUXDB_URL="http://skip-rule.invalid"
-  export INFLUXDB_TOKEN="skip-rule-not-used"
-  export INFLUXDB_ORG_ID="skip-rule-not-used"
   ;;
 false) ;;
 *)
