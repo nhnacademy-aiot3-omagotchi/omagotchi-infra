@@ -16,7 +16,7 @@ deploy_env="${TEST_TMP_DIR}/deploy.env"
 
 # Rule 전용 값만 제거한 실제 운영 Template 형태.
 grep -Ev \
-  '^(SENSOR_BROKER_URL|SENSOR_USERNAME|SENSOR_PASSWORD|INTERNAL_SHARED_SECRET|INFLUXDB_URL|INFLUXDB_TOKEN|INFLUXDB_ORG_ID)=' \
+  '^(SENSOR_BROKER_URL|SENSOR_USERNAME|SENSOR_PASSWORD|INTERNAL_SHARED_SECRET)=' \
   "${INFRA_DIR}/.env.prod.example" >"${secret_env}"
 grep -Ev '^RULE_IMAGE_TAG=' "${INFRA_DIR}/deploy.env.example" >"${deploy_env}"
 
@@ -29,6 +29,18 @@ COMPOSE_SKIP_RULE=true \
   DEPLOY_ENV_FILE="${deploy_env}" \
   SECRET_ENV_FILE="${secret_env}" \
   "${INFRA_DIR}/scripts/compose.sh" config --quiet
+
+if ! COMPOSE_SKIP_RULE=true \
+  DEPLOY_ENV_FILE="${deploy_env}" \
+  SECRET_ENV_FILE="${secret_env}" \
+  "${INFRA_DIR}/scripts/compose.sh" config --format json \
+  | jq -e '
+      .services["learning-service"].environment.INFLUXDB_URL == "https://replace-with-influxdb-host"
+      and .services["learning-service"].environment.INFLUXDB_TOKEN == "replace-with-influxdb-token"
+      and .services["learning-service"].environment.INFLUXDB_ORG_ID == "replace-with-influxdb-org-id"
+    ' >/dev/null; then
+  fail "Rule 제외 Compose 모드가 Learning의 실제 InfluxDB 설정을 보존하지 않았습니다."
+fi
 
 if COMPOSE_SKIP_RULE=true \
   DEPLOY_ENV_FILE="${deploy_env}" \
