@@ -42,6 +42,20 @@ if ! COMPOSE_SKIP_RULE=true \
   fail "Rule 제외 Compose 모드가 Learning의 실제 InfluxDB 설정을 보존하지 않았습니다."
 fi
 
+if ! COMPOSE_SKIP_RULE=true \
+  DEPLOY_ENV_FILE="${deploy_env}" \
+  SECRET_ENV_FILE="${secret_env}" \
+  "${INFRA_DIR}/scripts/compose.sh" config --format json \
+  | jq -e '
+      .services["learning-service"].environment.IDENTITY_SERVICE_BASE_URL == "lb://identity-service"
+      and .services["learning-service"].environment.LEARNING_IDENTITY_USERNAME == "learning-service"
+      and .services["learning-service"].environment.LEARNING_IDENTITY_PASSWORD == "replace-with-32-to-72-byte-secret"
+      and .services["identity-service"].environment.LEARNING_IDENTITY_USERNAME == .services["learning-service"].environment.LEARNING_IDENTITY_USERNAME
+      and .services["identity-service"].environment.LEARNING_IDENTITY_PASSWORD == .services["learning-service"].environment.LEARNING_IDENTITY_PASSWORD
+    ' >/dev/null; then
+  fail "Learning과 Identity의 계정 조회 Credential 또는 서비스 주소가 일치하지 않습니다."
+fi
+
 if COMPOSE_SKIP_RULE=true \
   DEPLOY_ENV_FILE="${deploy_env}" \
   SECRET_ENV_FILE="${secret_env}" \
