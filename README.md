@@ -33,6 +33,9 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
 - 범위: DB·Redis·Broker·Token·Credential·내부 API 공유 Secret
 - 저장 원칙: Git 추적 제외, 운영 Host의 저장소 외부 보관
 - Redis 저장소: Frontend Session·Learning Presence의 서로 다른 논리 DB 사용
+- 서비스 인증: 호출 관계별 Credential 분리
+- Learning → Identity: 계정 상태·표시 이름 조회 전용 Credential 사용
+- Identity 주소: Eureka의 `identity-service`와 Client-side Load Balancing 사용
 
 ### 배포 상태
 
