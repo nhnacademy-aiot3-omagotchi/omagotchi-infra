@@ -56,6 +56,8 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
 - `nginx/conf.d/default.conf`: Frontend·Gateway Route
 - `scripts/compose.sh`: Runtime 설정 검증·Compose 실행 Adapter
 - `scripts/deploy-infra.sh`: 전체 운영 구성 순차 배포
+  - 서비스 재생성 후 `nginx -t`·`nginx -s reload`·외부 Smoke Test 순서 실행
+  - Nginx 설정 검증·Reload 실패 시 배포 실패 처리
 - `scripts/deploy-service.sh`: 단일 서비스 이미지 배포·복구
 - `scripts/rule-engine.sh`: Rule A/B 상태·역할 검증
 - `scripts/smoke-test.sh`: 외부 Route·인증 경계 확인
