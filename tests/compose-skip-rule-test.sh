@@ -52,8 +52,14 @@ if ! COMPOSE_SKIP_RULE=true \
       and .services["learning-service"].environment.LEARNING_IDENTITY_PASSWORD == "replace-with-32-to-72-byte-secret"
       and .services["identity-service"].environment.LEARNING_IDENTITY_USERNAME == .services["learning-service"].environment.LEARNING_IDENTITY_USERNAME
       and .services["identity-service"].environment.LEARNING_IDENTITY_PASSWORD == .services["learning-service"].environment.LEARNING_IDENTITY_PASSWORD
+      and .services["learning-service"].environment.RULE_LEARNING_USERNAME == "rule-service"
+      and .services["learning-service"].environment.RULE_LEARNING_PASSWORD == "replace-with-32-to-72-byte-secret"
+      and .services["rule-engine-a"].environment.RULE_LEARNING_USERNAME == .services["learning-service"].environment.RULE_LEARNING_USERNAME
+      and .services["rule-engine-a"].environment.RULE_LEARNING_PASSWORD == .services["learning-service"].environment.RULE_LEARNING_PASSWORD
+      and .services["rule-engine-b"].environment.RULE_LEARNING_USERNAME == .services["learning-service"].environment.RULE_LEARNING_USERNAME
+      and .services["rule-engine-b"].environment.RULE_LEARNING_PASSWORD == .services["learning-service"].environment.RULE_LEARNING_PASSWORD
     ' >/dev/null; then
-  fail "Learning과 Identity의 계정 조회 Credential 또는 서비스 주소가 일치하지 않습니다."
+  fail "서비스 간 조회 Credential 또는 Identity 서비스 주소가 일치하지 않습니다."
 fi
 
 if COMPOSE_SKIP_RULE=true \
