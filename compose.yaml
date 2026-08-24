@@ -109,6 +109,8 @@ services:
       IDENTITY_SERVICE_READ_TIMEOUT: "2s"
       LEARNING_IDENTITY_USERNAME: "${LEARNING_IDENTITY_USERNAME:?LEARNING_IDENTITY_USERNAME is required}"
       LEARNING_IDENTITY_PASSWORD: "${LEARNING_IDENTITY_PASSWORD:?LEARNING_IDENTITY_PASSWORD is required}"
+      RULE_LEARNING_USERNAME: "${RULE_LEARNING_USERNAME:?RULE_LEARNING_USERNAME is required}"
+      RULE_LEARNING_PASSWORD: "${RULE_LEARNING_PASSWORD:?RULE_LEARNING_PASSWORD is required}"
 
       JWT_ISSUER: "${JWT_ISSUER:?JWT_ISSUER is required}"
       JWT_AUDIENCE: "${JWT_AUDIENCE:?JWT_AUDIENCE is required}"
@@ -185,7 +187,9 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
-      CORE_BASE_URL: "http://learning-service:8080"
+      LEARNING_BASE_URL: "http://learning-service:8080"
+      RULE_LEARNING_USERNAME: "${RULE_LEARNING_USERNAME:?RULE_LEARNING_USERNAME is required}"
+      RULE_LEARNING_PASSWORD: "${RULE_LEARNING_PASSWORD:?RULE_LEARNING_PASSWORD is required}"
 
       EUREKA_ENABLED: "true"
       EUREKA_URL: "http://discovery-service:8761/eureka/"
@@ -236,7 +240,9 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
-      CORE_BASE_URL: "http://learning-service:8080"
+      LEARNING_BASE_URL: "http://learning-service:8080"
+      RULE_LEARNING_USERNAME: "${RULE_LEARNING_USERNAME:?RULE_LEARNING_USERNAME is required}"
+      RULE_LEARNING_PASSWORD: "${RULE_LEARNING_PASSWORD:?RULE_LEARNING_PASSWORD is required}"
 
       EUREKA_ENABLED: "true"
       EUREKA_URL: "http://discovery-service:8761/eureka/"
