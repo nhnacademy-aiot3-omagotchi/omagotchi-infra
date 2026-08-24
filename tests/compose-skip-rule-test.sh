@@ -56,10 +56,14 @@ if ! COMPOSE_SKIP_RULE=true \
       and .services["learning-service"].environment.RULE_LEARNING_PASSWORD == "replace-with-32-to-72-byte-secret"
       and .services["rule-engine-a"].environment.RULE_LEARNING_USERNAME == .services["learning-service"].environment.RULE_LEARNING_USERNAME
       and .services["rule-engine-a"].environment.RULE_LEARNING_PASSWORD == .services["learning-service"].environment.RULE_LEARNING_PASSWORD
+      and .services["rule-engine-a"].environment.LEARNING_BASE_URL == "http://learning-service:8080"
+      and .services["rule-engine-a"].environment.CORE_BASE_URL == null
       and .services["rule-engine-b"].environment.RULE_LEARNING_USERNAME == .services["learning-service"].environment.RULE_LEARNING_USERNAME
       and .services["rule-engine-b"].environment.RULE_LEARNING_PASSWORD == .services["learning-service"].environment.RULE_LEARNING_PASSWORD
+      and .services["rule-engine-b"].environment.LEARNING_BASE_URL == "http://learning-service:8080"
+      and .services["rule-engine-b"].environment.CORE_BASE_URL == null
     ' >/dev/null; then
-  fail "서비스 간 조회 Credential 또는 Identity 서비스 주소가 일치하지 않습니다."
+  fail "서비스 간 조회 Credential 또는 서비스 주소 계약이 일치하지 않습니다."
 fi
 
 if COMPOSE_SKIP_RULE=true \
