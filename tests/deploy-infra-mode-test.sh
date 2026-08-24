@@ -116,6 +116,14 @@ assert_not_contains "rule-rollout:" "${events_file}" \
   "Rule 제외 배포에서 Rule 롤아웃이 실행되었습니다."
 assert_not_contains "--remove-orphans" "${events_file}" \
   "Rule 제외 배포에서 기존 Rule Container 정리가 실행되었습니다."
+assert_not_contains "eureka:FRONTEND" "${events_file}" \
+  "Registry 조회 전용 Frontend의 Eureka 등록을 기다렸습니다."
+assert_contains "eureka:GATEWAY-SERVICE" "${events_file}" \
+  "Gateway의 Eureka 등록 확인이 누락되었습니다."
+assert_contains "eureka:IDENTITY-SERVICE" "${events_file}" \
+  "Identity의 Eureka 등록 확인이 누락되었습니다."
+assert_contains "eureka:LEARNING-SERVICE" "${events_file}" \
+  "Learning의 Eureka 등록 확인이 누락되었습니다."
 assert_contains "smoke:--skip-rule https://example.invalid" "${events_file}" \
   "Rule 제외 Smoke Test 옵션이 전달되지 않았습니다."
 assert_before "compose:exec -T nginx nginx -t" \

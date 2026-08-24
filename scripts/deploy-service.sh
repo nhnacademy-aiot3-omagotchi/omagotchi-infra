@@ -80,11 +80,11 @@ reload_nginx() {
 }
 
 # Discovery 교체 완료 조건.
-# 모든 Eureka Client와 Rule A/B의 재등록·역할 안정화 확인.
+# Eureka 등록 대상 서비스와 Rule A/B의 재등록·역할 안정화 확인.
+# Frontend는 Registry 조회만 수행하고 register-with-eureka=false이므로 확인 대상 제외.
 wait_discovery_clients() {
   local env_file="$1"
 
-  wait_eureka_application "${env_file}" "FRONTEND" || return 1
   wait_eureka_application "${env_file}" "GATEWAY-SERVICE" || return 1
   wait_eureka_application "${env_file}" "IDENTITY-SERVICE" || return 1
   wait_eureka_application "${env_file}" "LEARNING-SERVICE" || return 1
