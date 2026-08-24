@@ -29,6 +29,20 @@ assert_not_contains() {
   fi
 }
 
+assert_before() {
+  local first_pattern="$1"
+  local second_pattern="$2"
+  local file="$3"
+  local message="$4"
+  local first_line
+  local second_line
+
+  first_line="$(grep -Fn -- "${first_pattern}" "${file}" | head -n 1 | cut -d: -f1)"
+  second_line="$(grep -Fn -- "${second_pattern}" "${file}" | head -n 1 | cut -d: -f1)"
+  [[ -n "${first_line}" && -n "${second_line}" && "${first_line}" -lt "${second_line}" ]] ||
+    fail "${message}"
+}
+
 fixture_dir="${TEST_TMP_DIR}/omagotchi/infra"
 events_file="${TEST_TMP_DIR}/events"
 output_file="${TEST_TMP_DIR}/output"
@@ -62,6 +76,10 @@ EOF
 cat >"${fixture_dir}/scripts/compose.sh" <<'EOF'
 #!/usr/bin/env bash
 printf 'compose:%s\n' "$*" >>"${MODE_TEST_EVENTS}"
+if [[ "${MODE_TEST_FAIL_NGINX_RELOAD:-false}" == "true"
+  && "$*" == "exec -T nginx nginx -s reload" ]]; then
+  exit 1
+fi
 EOF
 
 cat >"${fixture_dir}/scripts/smoke-test.sh" <<'EOF'
@@ -100,6 +118,12 @@ assert_not_contains "--remove-orphans" "${events_file}" \
   "Rule 제외 배포에서 기존 Rule Container 정리가 실행되었습니다."
 assert_contains "smoke:--skip-rule https://example.invalid" "${events_file}" \
   "Rule 제외 Smoke Test 옵션이 전달되지 않았습니다."
+assert_before "compose:exec -T nginx nginx -t" \
+  "compose:exec -T nginx nginx -s reload" "${events_file}" \
+  "Nginx 설정 검증이 reload보다 먼저 실행되지 않았습니다."
+assert_before "compose:exec -T nginx nginx -s reload" \
+  "smoke:--skip-rule https://example.invalid" "${events_file}" \
+  "Nginx reload가 Rule 제외 Smoke Test보다 먼저 실행되지 않았습니다."
 assert_contains "인프라 부분 배포 완료" "${output_file}" \
   "Rule 제외 배포 완료 상태가 명시되지 않았습니다."
 
@@ -116,5 +140,16 @@ assert_contains "smoke:https://example.invalid" "${events_file}" \
   "전체 배포 Smoke Test가 누락되었습니다."
 assert_not_contains "smoke:--skip-rule" "${events_file}" \
   "전체 배포에서 Rule Smoke Test가 제외되었습니다."
+
+: >"${events_file}"
+if MODE_TEST_EVENTS="${events_file}" \
+  MODE_TEST_FAIL_NGINX_RELOAD=true \
+  PATH="${fake_bin}:${PATH}" \
+  bash "${INFRA_DIR}/scripts/deploy-infra.sh" \
+    --skip-rule "${fixture_dir}" "${sha}" >/dev/null 2>&1; then
+  fail "Nginx reload 실패가 전체 배포 실패로 전파되지 않았습니다."
+fi
+assert_not_contains "smoke:" "${events_file}" \
+  "Nginx reload 실패 이후 Smoke Test가 실행되었습니다."
 
 echo "Deploy infra mode tests passed"

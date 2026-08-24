@@ -10,7 +10,7 @@ umask 077
 # 3. Discovery 선행 배포와 Eureka Client 재등록 확인
 # 4. Rule Engine A/B 순차 배포와 역할 안정화 확인
 #    --skip-rule 수동 배포에서는 Rule Container와 기존 상태를 변경하지 않음
-# 5. Nginx·Cloudflare 기동과 외부 Smoke Test
+# 5. Nginx·Cloudflare 기동, Nginx 설정 검증·Reload, 외부 Smoke Test
 #
 # 실패 범위:
 # - 실패 즉시 중단과 현재 단계 출력
@@ -119,6 +119,13 @@ compose() {
     "${COMPOSE_SCRIPT}" "$@"
 }
 
+# 서비스 Container 재생성으로 변경된 IP를 Nginx Upstream에 다시 반영.
+# 설정 검증 또는 Reload 실패 시 외부 Smoke Test 이전에 배포 실패 처리.
+reload_nginx() {
+  compose exec -T nginx nginx -t || return 1
+  compose exec -T nginx nginx -s reload || return 1
+}
+
 # rule-engine.sh가 전달받은 env 파일로 상태를 조회하기 위한 Adapter.
 rule_compose() {
   local env_file="$1"
@@ -180,6 +187,11 @@ fi
 
 # 내부 서비스 검증 완료 이후 외부 진입점 반영.
 compose up -d --no-deps --wait --wait-timeout 300 nginx cloudflared
+reload_nginx || {
+  echo "Nginx 설정 검증 또는 reload 실패. 외부 Route 반영 상태를 확인하세요." >&2
+  exit 1
+}
+
 if [[ "${skip_rule}" == "true" ]]; then
   "${SMOKE_SCRIPT}" --skip-rule "${base_url}"
   echo "인프라 부분 배포 완료: ${old_sha} -> ${sha} (Rule Engine 제외)"
