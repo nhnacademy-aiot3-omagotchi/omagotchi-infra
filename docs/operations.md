@@ -116,7 +116,8 @@ Rule hot-standby 준비 전 나머지 운영 경로 확인을 위한 임시 절�
 
 - 모든 대상 Container Healthcheck 통과
 - Container Log Rotation 적용
-- Discovery의 Frontend·Gateway·Identity·Learning 등록
+- Frontend의 Eureka Registry 조회 정상
+- Discovery의 Gateway·Identity·Learning 등록
 - Rule 포함 배포 시 `engine-a`·`engine-b` 등록
 - Rule 포함 배포 시 정확히 하나의 `ACTIVE`·하나의 `STANDBY`
 - Identity·Learning Flyway Migration 성공
@@ -132,4 +133,5 @@ Rule hot-standby 준비 전 나머지 운영 경로 확인을 위한 임시 절�
 - Service 로그: `./scripts/logs.sh <service>`
 - 단일 서비스 복구: `deploy.env`의 직전 SHA로 `deploy-service.sh` 실행
 - Rule 복구: Script의 역순 복구 결과·A/B 역할 재확인
+- 기존 `omagotchi-net` 소유 Label 경고: 실행 중 Network 제거 금지, 전체 중단이 가능한 정비 시간에 Compose Network 재생성
 - 자동 재시도 금지: 원인·현재 실행 SHA·Eureka 등록 상태 확인 후 재실행

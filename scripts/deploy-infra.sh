@@ -165,7 +165,7 @@ compose up \
   learning-service
 
 # Container Healthcheck와 별개인 Eureka 등록 상태 확인.
-wait_eureka_application "${DEPLOY_ENV}" "FRONTEND"
+# Frontend는 Registry 조회만 수행하고 register-with-eureka=false이므로 확인 대상 제외.
 wait_eureka_application "${DEPLOY_ENV}" "GATEWAY-SERVICE"
 wait_eureka_application "${DEPLOY_ENV}" "IDENTITY-SERVICE"
 wait_eureka_application "${DEPLOY_ENV}" "LEARNING-SERVICE"

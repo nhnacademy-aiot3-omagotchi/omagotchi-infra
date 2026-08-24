@@ -90,7 +90,6 @@ wait_rule_engine_cluster() {
 }
 
 for fail_stage in \
-  FRONTEND \
   GATEWAY-SERVICE \
   IDENTITY-SERVICE \
   LEARNING-SERVICE \
@@ -102,20 +101,17 @@ for fail_stage in \
   fi
 
   case "${fail_stage}" in
-  FRONTEND)
-    expected="eureka:FRONTEND"
-    ;;
   GATEWAY-SERVICE)
-    expected="eureka:FRONTEND eureka:GATEWAY-SERVICE"
+    expected="eureka:GATEWAY-SERVICE"
     ;;
   IDENTITY-SERVICE)
-    expected="eureka:FRONTEND eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE"
+    expected="eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE"
     ;;
   LEARNING-SERVICE)
-    expected="eureka:FRONTEND eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE eureka:LEARNING-SERVICE"
+    expected="eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE eureka:LEARNING-SERVICE"
     ;;
   rule-cluster)
-    expected="eureka:FRONTEND eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE eureka:LEARNING-SERVICE rule-cluster"
+    expected="eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE eureka:LEARNING-SERVICE rule-cluster"
     ;;
   esac
 
@@ -126,7 +122,7 @@ done
 fail_stage="none"
 calls=()
 wait_discovery_clients fixture.env >/dev/null
-[[ "${calls[*]}" == "eureka:FRONTEND eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE eureka:LEARNING-SERVICE rule-cluster" ]] ||
+[[ "${calls[*]}" == "eureka:GATEWAY-SERVICE eureka:IDENTITY-SERVICE eureka:LEARNING-SERVICE rule-cluster" ]] ||
   fail "Discovery 정상 검사 순서가 올바르지 않습니다: ${calls[*]}"
 
 echo "Deploy health check failure propagation tests passed"
