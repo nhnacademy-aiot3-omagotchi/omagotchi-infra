@@ -9,25 +9,16 @@ umask 077
 # 2. Compose 설정 검증
 # 3. Discovery 선행 배포와 Eureka Client 재등록 확인
 # 4. Rule Engine A/B 순차 배포와 역할 안정화 확인
-#    --skip-rule 수동 배포에서는 Rule Container와 기존 상태를 변경하지 않음
 # 5. Nginx·Cloudflare 기동, Nginx 설정 검증·Reload, 외부 Smoke Test
 #
 # 실패 범위:
 # - 실패 즉시 중단과 현재 단계 출력
 # - Git checkout·이미 갱신된 Container의 전체 자동 Rollback 미제공
-# - 최초 운영 배포 중 작업자 확인과 수동 복구를 전제로 한 구조
+# - 부분 실패 시 작업자 확인과 수동 복구를 전제로 한 구조
 
 usage() {
-  echo "사용법: $0 [--skip-rule] <infra-directory> <40-character-commit-sha>" >&2
+  echo "사용법: $0 <infra-directory> <40-character-commit-sha>" >&2
 }
-
-# Rule 구현 완료 전 최초 운영 환경 확인용 수동 부분 배포.
-# 기본값은 전체 배포이며 GitHub Actions도 이 옵션을 전달하지 않음.
-skip_rule=false
-if [[ "${1:-}" == "--skip-rule" ]]; then
-  skip_rule=true
-  shift
-fi
 
 # 대상 경로와 Revision의 암묵적 추론 금지.
 # GitHub Actions와 수동 배포 모두 두 값을 명시적으로 전달.
@@ -145,8 +136,7 @@ git merge --ff-only "${sha}"
 
 # 실제 deploy.env를 사용하는 전체 Infra Compose Adapter.
 compose() {
-  COMPOSE_SKIP_RULE="${skip_rule}" \
-    DEPLOY_ENV_FILE="${DEPLOY_ENV}" \
+  DEPLOY_ENV_FILE="${DEPLOY_ENV}" \
     SECRET_ENV_FILE="${SECRET_ENV}" \
     "${COMPOSE_SCRIPT}" "$@"
 }
@@ -162,8 +152,7 @@ reload_nginx() {
 rule_compose() {
   local env_file="$1"
   shift
-  COMPOSE_SKIP_RULE="${skip_rule}" \
-    DEPLOY_ENV_FILE="${env_file}" \
+  DEPLOY_ENV_FILE="${env_file}" \
     SECRET_ENV_FILE="${SECRET_ENV}" \
     "${COMPOSE_SCRIPT}" "$@"
 }
@@ -202,20 +191,14 @@ wait_eureka_application "${DEPLOY_ENV}" "GATEWAY-SERVICE"
 wait_eureka_application "${DEPLOY_ENV}" "IDENTITY-SERVICE"
 wait_eureka_application "${DEPLOY_ENV}" "LEARNING-SERVICE"
 
-if [[ "${skip_rule}" == "true" ]]; then
-  # 부분 배포에서 --remove-orphans 미사용.
-  # 기존 단일 Rule 또는 A/B Container의 의도하지 않은 제거 방지.
-  echo "SKIP Rule Engine A/B 배포: 기존 Rule Container 상태 유지"
-else
-  # Compose 정의에서 제거된 이전 단일 rule-service Container 정리.
-  # A/B Container의 동시 재생성이 아닌 순차 기동 유지.
-  compose up -d --no-deps --remove-orphans discovery-service
+# Compose 정의에서 제거된 이전 단일 rule-service Container 정리.
+# A/B Container의 동시 재생성이 아닌 순차 기동 유지.
+compose up -d --no-deps --remove-orphans discovery-service
 
-  rollout_rule_engine_infra "${DEPLOY_ENV}" || {
-    echo "Rule Engine 순차 배포 실패. 일부 인스턴스가 갱신되었을 수 있으므로 A/B 상태와 이미지 태그를 확인하세요." >&2
-    exit 1
-  }
-fi
+rollout_rule_engine_infra "${DEPLOY_ENV}" || {
+  echo "Rule Engine 순차 배포 실패. 일부 인스턴스가 갱신되었을 수 있으므로 A/B 상태와 이미지 태그를 확인하세요." >&2
+  exit 1
+}
 
 # 내부 서비스 검증 완료 이후 외부 진입점 반영.
 compose up -d --no-deps --wait --wait-timeout 300 nginx cloudflared
@@ -223,12 +206,6 @@ reload_nginx || {
   echo "Nginx 설정 검증 또는 reload 실패. 외부 Route 반영 상태를 확인하세요." >&2
   exit 1
 }
-
-if [[ "${skip_rule}" == "true" ]]; then
-  "${SMOKE_SCRIPT}" --skip-rule "${base_url}"
-  echo "인프라 부분 배포 완료: ${old_sha} -> ${sha} (Rule Engine 제외)"
-  exit 0
-fi
 
 "${SMOKE_SCRIPT}" "${base_url}"
 

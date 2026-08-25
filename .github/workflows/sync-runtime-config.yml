@@ -1,66 +1,18 @@
-name: Deploy Infrastructure
+name: Sync Runtime Configuration
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - compose.yaml
-      - .env.prod.example
-      - deploy.env.example
-      - nginx/**
-      - scripts/**
-      - tests/**
-      - .github/workflows/ci.yml
-      - .github/workflows/deploy.yml
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  validate:
-    name: Validate Compose and Shell
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Validate shell scripts
-        shell: bash
-        run: bash -n scripts/*.sh tests/*.sh
-
-      - name: Lint shell scripts
-        shell: bash
-        run: shellcheck scripts/*.sh tests/*.sh
-
-      - name: Test deployment scripts
-        shell: bash
-        run: |
-          for test_script in tests/*-test.sh; do
-            "${test_script}"
-          done
-
-      - name: Validate Compose configuration
-        shell: bash
-        run: |
-          docker compose \
-            --env-file .env.prod.example \
-            --env-file deploy.env.example \
-            config --quiet
-
-  deploy:
-    name: Deploy to School Server
-    # main Push는 검증만 수행. 전체 구성 배포는 수동 실행과 Kill Switch 활성화를 모두 요구.
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' }}
-    needs:
-      - validate
+  sync:
+    name: Sync Runtime Configuration
+    if: github.ref == 'refs/heads/main'
 
     runs-on: ubuntu-latest
-    # Lock 대기·Eureka 재등록·Rule A/B 순차 기동의 최대 대기 예산 반영
-    timeout-minutes: 60
+    timeout-minutes: 20
 
     environment:
       name: production
@@ -124,10 +76,48 @@ jobs:
           chmod 600 "$HOME/.ssh/deploy_key"
           chmod 644 "$HOME/.ssh/known_hosts"
 
-      - name: Deploy infrastructure
+      - name: Sync runtime configuration
         shell: bash
+        env:
+          PROD_ENV: ${{ secrets.PROD_ENV }}
         run: |
           set -euo pipefail
+          umask 077
+
+          : "${PROD_ENV:?PROD_ENV is required}"
+
+          runner_env_file="${RUNNER_TEMP}/prod.env"
+          incoming_name=".incoming-prod.env.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          incoming_path="${DEPLOY_PATH%/}/../secrets/${incoming_name}"
+
+          cleanup() {
+            rm -f -- "${runner_env_file}"
+            ssh \
+              -i "$HOME/.ssh/deploy_key" \
+              -p "$DEPLOY_PORT" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=10 \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              "rm -f -- '${incoming_path}'" \
+              >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          printf '%s\n' "$PROD_ENV" >"${runner_env_file}"
+          unset PROD_ENV
+          chmod 600 "${runner_env_file}"
+
+          scp \
+            -i "$HOME/.ssh/deploy_key" \
+            -P "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=10 \
+            "${runner_env_file}" \
+            "$DEPLOY_USER@$DEPLOY_HOST:${incoming_path}"
 
           ssh \
             -i "$HOME/.ssh/deploy_key" \
@@ -137,5 +127,5 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o ConnectTimeout=10 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "bash -s -- '$DEPLOY_PATH' '$GITHUB_SHA'" \
-            < scripts/deploy-infra.sh
+            "bash -s -- '$DEPLOY_PATH' '$GITHUB_SHA' '$incoming_path'" \
+            < scripts/sync-runtime-config.sh

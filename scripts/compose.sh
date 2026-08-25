@@ -35,6 +35,8 @@ runtime_keys=(
   IDENTITY_DB_URL
   IDENTITY_DB_USERNAME
   IDENTITY_DB_PASSWORD
+  LOGIN_MAXIMUM_FAILED_ATTEMPTS
+  LOGIN_LOCK_DURATION
   LEARNING_DB_URL
   LEARNING_DB_USERNAME
   LEARNING_DB_PASSWORD
@@ -77,6 +79,11 @@ runtime_keys=(
 )
 
 for key in "${runtime_keys[@]}"; do
+  if ! grep -Eq "^[[:space:]]*${key}=" "${SECRET_ENV_FILE}"; then
+    echo "prod.env에 필수 Runtime 설정이 없습니다: ${key}" >&2
+    exit 1
+  fi
+
   if grep -Eq "^[[:space:]]*${key}=" "${DEPLOY_ENV_FILE}"; then
     echo "${key}는 deploy.env가 아니라 prod.env에만 두어야 합니다." >&2
     exit 1
@@ -96,6 +103,11 @@ deploy_keys=(
 )
 
 for key in "${deploy_keys[@]}"; do
+  if ! grep -Eq "^[[:space:]]*${key}=" "${DEPLOY_ENV_FILE}"; then
+    echo "deploy.env에 필수 배포 상태가 없습니다: ${key}" >&2
+    exit 1
+  fi
+
   if grep -Eq "^[[:space:]]*${key}=" "${SECRET_ENV_FILE}"; then
     echo "${key}는 prod.env가 아니라 deploy.env에 두어야 합니다." >&2
     exit 1
@@ -104,41 +116,6 @@ done
 
 # Compose 환경변수 우선순위에 따른 호출 셸 export 값의 혼입 차단.
 unset "${runtime_keys[@]}" "${deploy_keys[@]}"
-
-# Rule 구현 완료 전의 수동 부분 배포 전용 Compose 해석 값.
-# Rule Container를 기동하지 않는 동안에만 Rule 전용 필수 변수의 구문 검증을 통과시킴.
-# 실제 운영 Secret의 대체값이 아니며 Rule 서비스를 대상으로 사용하면 즉시 중단.
-COMPOSE_SKIP_RULE="${COMPOSE_SKIP_RULE:-false}"
-case "${COMPOSE_SKIP_RULE}" in
-true)
-  skip_rule_safe_service_found=false
-  for argument in "$@"; do
-    case "${argument}" in
-    rule-engine-a | rule-engine-b)
-      echo "Rule 제외 Compose 모드에서는 Rule Engine을 실행할 수 없습니다." >&2
-      exit 1
-      ;;
-    discovery-service | frontend | gateway-service | identity-service | learning-service | nginx | cloudflared)
-      skip_rule_safe_service_found=true
-      ;;
-    esac
-  done
-
-  if [[ "${1:-}" == "up" && "${skip_rule_safe_service_found}" != "true" ]]; then
-    echo "Rule 제외 Compose 모드의 up 명령은 기동할 서비스를 명시해야 합니다." >&2
-    exit 1
-  fi
-
-  export RULE_IMAGE_TAG="0000000000000000000000000000000000000000"
-  export SENSOR_BROKER_URL="tcp://skip-rule.invalid:1883"
-  export INTERNAL_SHARED_SECRET="skip-rule-not-used-in-partial-deployment"
-  ;;
-false) ;;
-*)
-  echo "COMPOSE_SKIP_RULE은 true 또는 false여야 합니다." >&2
-  exit 64
-  ;;
-esac
 
 cd "${INFRA_DIR}"
 
