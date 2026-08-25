@@ -32,6 +32,10 @@ jobs:
         shell: bash
         run: bash -n scripts/*.sh tests/*.sh
 
+      - name: Lint shell scripts
+        shell: bash
+        run: shellcheck scripts/*.sh tests/*.sh
+
       - name: Test deployment scripts
         shell: bash
         run: |
