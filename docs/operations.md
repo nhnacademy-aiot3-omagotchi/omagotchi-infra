@@ -6,7 +6,6 @@ Infra 운영 담당자를 위한 Host 준비·배포·검증 절차.
 
 - 최초 운영 Host 준비
 - Runtime 설정·JWT Key 배치
-- Rule 제외 초기 배포
 - 전체 Infra 배포
 - 배포 후 확인·복구
 
@@ -120,25 +119,6 @@ shellcheck scripts/*.sh tests/*.sh
 - 전체 배포: `main` 대상 `workflow_dispatch` 실행 전 `DEPLOY_ENABLED=true`로 일시 활성화
 - 배포 종료 후: `DEPLOY_ENABLED=false` 복원
 
-## Rule 제외 초기 배포
-
-Rule hot-standby 준비 전 나머지 운영 경로 확인을 위한 임시 절차.
-
-```bash
-./scripts/deploy-infra.sh \
-  --skip-rule \
-  "$PWD" \
-  <40-character-infra-commit-sha>
-```
-
-- 기동 대상: Discovery, Frontend, Gateway, Identity, Learning, Nginx, Cloudflare
-- 제외 대상: Rule Engine A/B·Rule Ping
-- 기존 Rule Container: 제거·재생성 없음
-- Rule 전용 대체값: Compose 해석 전용, Container 주입 금지
-- 예상 상태: Rule 공개 API의 일시적 `503`
-- 완료 기준: `인프라 부분 배포 완료` 출력·대상 서비스 Health 통과
-- 폐기 시점: Rule A/B 운영 준비 완료 후 전체 배포 전환
-
 ## 전체 Infra 배포
 
 ```bash
@@ -162,8 +142,8 @@ Rule hot-standby 준비 전 나머지 운영 경로 확인을 위한 임시 절�
 - Container Log Rotation 적용
 - Frontend의 Eureka Registry 조회 정상
 - Discovery의 Gateway·Identity·Learning 등록
-- Rule 포함 배포 시 `engine-a`·`engine-b` 등록
-- Rule 포함 배포 시 정확히 하나의 `ACTIVE`·하나의 `STANDBY`
+- Rule `engine-a`·`engine-b` 등록
+- Rule 역할: `ACTIVE` 1개·`STANDBY` 1개
 - Identity·Learning Flyway Migration 성공
 - 공개 화면·보호 API 정상 응답
 - Token 미제공 `401`, 권한 부족 `403`
@@ -173,8 +153,8 @@ Rule hot-standby 준비 전 나머지 운영 경로 확인을 위한 임시 절�
 ## 실패 대응
 
 - 배포 완료 메시지 이전 실패: 부분 적용 가능성 확인
-- Container 상태: `./scripts/ps.sh`
-- Service 로그: `./scripts/logs.sh <service>`
+- Container 상태: `./scripts/compose.sh ps`
+- Service 로그: `./scripts/compose.sh logs -f <service>`
 - 단일 서비스 복구: `deploy.env`의 직전 SHA로 `deploy-service.sh` 실행
 - Rule 복구: Script의 역순 복구 결과·A/B 역할 재확인
 - 기존 `omagotchi-net` 소유 Label 경고: 실행 중 Network 제거 금지, 전체 중단이 가능한 정비 시간에 Compose Network 재생성
