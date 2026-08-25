@@ -79,6 +79,11 @@ runtime_keys=(
 )
 
 for key in "${runtime_keys[@]}"; do
+  if ! grep -Eq "^[[:space:]]*${key}=" "${SECRET_ENV_FILE}"; then
+    echo "prod.env에 필수 Runtime 설정이 없습니다: ${key}" >&2
+    exit 1
+  fi
+
   if grep -Eq "^[[:space:]]*${key}=" "${DEPLOY_ENV_FILE}"; then
     echo "${key}는 deploy.env가 아니라 prod.env에만 두어야 합니다." >&2
     exit 1
@@ -98,6 +103,11 @@ deploy_keys=(
 )
 
 for key in "${deploy_keys[@]}"; do
+  if ! grep -Eq "^[[:space:]]*${key}=" "${DEPLOY_ENV_FILE}"; then
+    echo "deploy.env에 필수 배포 상태가 없습니다: ${key}" >&2
+    exit 1
+  fi
+
   if grep -Eq "^[[:space:]]*${key}=" "${SECRET_ENV_FILE}"; then
     echo "${key}는 prod.env가 아니라 deploy.env에 두어야 합니다." >&2
     exit 1
