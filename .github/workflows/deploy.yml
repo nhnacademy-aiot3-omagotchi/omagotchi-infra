@@ -91,6 +91,23 @@ jobs:
           : "${DEPLOY_SSH_KEY:?DEPLOY_SSH_KEY is required}"
           : "${DEPLOY_KNOWN_HOSTS:?DEPLOY_KNOWN_HOSTS is required}"
 
+          [[ "${DEPLOY_HOST}" =~ ^[A-Za-z0-9.-]+$ ]] || {
+            echo "DEPLOY_HOST 형식이 올바르지 않습니다." >&2
+            exit 64
+          }
+          [[ "${DEPLOY_PORT}" =~ ^[0-9]+$ ]] || {
+            echo "DEPLOY_PORT 형식이 올바르지 않습니다." >&2
+            exit 64
+          }
+          [[ "${DEPLOY_USER}" =~ ^[A-Za-z0-9._-]+$ ]] || {
+            echo "DEPLOY_USER 형식이 올바르지 않습니다." >&2
+            exit 64
+          }
+          [[ "${DEPLOY_PATH}" =~ ^/[A-Za-z0-9._/-]+$ ]] || {
+            echo "DEPLOY_PATH 형식이 올바르지 않습니다." >&2
+            exit 64
+          }
+
           install -d -m 700 "$HOME/.ssh"
 
           printf '%s\n' "$DEPLOY_SSH_KEY" \
