@@ -51,10 +51,11 @@ jobs:
             echo "DEPLOY_HOST 형식이 올바르지 않습니다." >&2
             exit 64
           }
-          [[ "${DEPLOY_PORT}" =~ ^[0-9]+$ ]] || {
+          if [[ ! "${DEPLOY_PORT}" =~ ^[0-9]{1,5}$ ]] ||
+            ((10#${DEPLOY_PORT} < 1 || 10#${DEPLOY_PORT} > 65535)); then
             echo "DEPLOY_PORT 형식이 올바르지 않습니다." >&2
             exit 64
-          }
+          fi
           [[ "${DEPLOY_USER}" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || {
             echo "DEPLOY_USER 형식이 올바르지 않습니다." >&2
             exit 64
