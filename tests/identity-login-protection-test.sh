@@ -14,6 +14,7 @@ fail() {
 deploy_env="${TEST_TMP_DIR}/deploy.env"
 full_secret_env="${TEST_TMP_DIR}/prod.env"
 missing_secret_env="${TEST_TMP_DIR}/missing-prod.env"
+invalid_deploy_env="${TEST_TMP_DIR}/invalid-deploy.env"
 
 cp "${INFRA_DIR}/deploy.env.example" "${deploy_env}"
 cp "${INFRA_DIR}/.env.prod.example" "${full_secret_env}"
@@ -24,6 +25,16 @@ for required_setting in LOGIN_MAXIMUM_FAILED_ATTEMPTS LOGIN_LOCK_DURATION; do
   if DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${missing_secret_env}" \
     "${INFRA_DIR}/scripts/compose.sh" config --quiet >/dev/null 2>&1; then
     fail "Identity 로그인 보호 필수 설정 누락이 허용되었습니다: ${required_setting}"
+  fi
+done
+
+for runtime_setting in LOGIN_MAXIMUM_FAILED_ATTEMPTS LOGIN_LOCK_DURATION; do
+  cp "${deploy_env}" "${invalid_deploy_env}"
+  grep "^${runtime_setting}=" "${full_secret_env}" >>"${invalid_deploy_env}"
+
+  if DEPLOY_ENV_FILE="${invalid_deploy_env}" SECRET_ENV_FILE="${full_secret_env}" \
+    "${INFRA_DIR}/scripts/compose.sh" config --quiet >/dev/null 2>&1; then
+    fail "Identity 로그인 보호 설정의 deploy.env 유입이 허용되었습니다: ${runtime_setting}"
   fi
 done
 
