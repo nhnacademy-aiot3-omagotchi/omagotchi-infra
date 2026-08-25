@@ -85,10 +85,10 @@ shellcheck scripts/*.sh tests/*.sh
 
 - 기준 흐름: `feature → dev PR → dev → main PR`
 - 긴급 상황: OrganizationAdmin Ruleset 우회는 비상 절차로만 사용하고, 반영 후 `main` 변경을 `dev`에 즉시 역반영
-- main 승격 조건: 최신 `main`을 반영하고 dev Quality 검증을 통과한 `dev`
+- main 승격 조건: dev Quality 검증을 통과한 `dev`의 PR 승격
 - 서비스 정상 승격: dev Quality 결과 재사용, main Push의 Maven Verify 미실행
 - 서비스 Required Check: `dev`는 `Maven Verify`, `main`은 `Maven Verify and SonarQube`를 적용
-- 서비스 `main` Ruleset: `Require branches to be up to date before merging` 활성화
+- 서비스 `main` Ruleset: Required Check만 강제하고 `Require branches to be up to date before merging` 비활성화
 - Infra Required Check: `dev`와 `main` 모두 `Validate Compose and Shell`을 적용
 - 서비스 `main`: 이미지 Build·Publish
 - Infra `main`: 구성 검증만 수행
