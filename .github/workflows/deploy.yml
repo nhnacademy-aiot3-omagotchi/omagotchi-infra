@@ -6,8 +6,11 @@ on:
       - main
     paths:
       - compose.yaml
+      - .env.prod.example
+      - deploy.env.example
       - nginx/**
       - scripts/**
+      - tests/**
       - .github/workflows/ci.yml
       - .github/workflows/deploy.yml
   workflow_dispatch:
@@ -46,7 +49,8 @@ jobs:
 
   deploy:
     name: Deploy to School Server
-    if: ${{ vars.DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    # main Push는 검증만 수행. 전체 구성 배포는 수동 실행과 Kill Switch 활성화를 모두 요구.
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' }}
     needs:
       - validate
 

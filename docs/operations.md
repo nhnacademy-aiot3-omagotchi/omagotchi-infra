@@ -77,7 +77,9 @@ shellcheck scripts/*.sh tests/*.sh
 - Image SHA: GHCR 발행 확인
 - Runtime 설정: 필수 항목·파일 권한 확인
 - 외부 자원: 운영 Host 기준 Network 연결 확인
-- 자동 배포: 최초 검증 완료 전 `DEPLOY_ENABLED=false`
+- Infra `main` Push: 구성 검증만 수행하며 전체 배포는 실행하지 않음
+- 전체 배포: `main` 대상 `workflow_dispatch` 실행 전 `DEPLOY_ENABLED=true`로 일시 활성화
+- 배포 종료 후: `DEPLOY_ENABLED=false` 복원
 
 ## Rule 제외 초기 배포
 
@@ -111,7 +113,9 @@ Rule hot-standby 준비 전 나머지 운영 경로 확인을 위한 임시 절�
 - Rule 초기화: 물리 Instance별 순차 기동·역할 안정화
 - Rule 후속 배포: 현재 STANDBY부터 순차 교체
 - Rule 완료 조건: 두 Engine 등록·연속 3회 exactly-one-ACTIVE
-- 자동 배포 전환: 최초 수동 배포·복구 검증 이후 별도 결정
+- 배포 실행: `main` 대상 `workflow_dispatch`와 `DEPLOY_ENABLED=true`를 모두 요구
+- 동시 실행: 기존 서비스·Infra 배포가 있으면 공용 Lock을 최대 600초 대기
+- 잠금 시간 초과: 실행 중인 배포를 중단하지 않고 새 배포만 실패
 
 ## 운영 확인
 
