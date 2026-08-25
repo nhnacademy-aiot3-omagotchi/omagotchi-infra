@@ -40,6 +40,9 @@ services:
       DB_USERNAME: "${IDENTITY_DB_USERNAME:?IDENTITY_DB_USERNAME is required}"
       DB_PASSWORD: "${IDENTITY_DB_PASSWORD:?IDENTITY_DB_PASSWORD is required}"
 
+      LOGIN_MAXIMUM_FAILED_ATTEMPTS: "${LOGIN_MAXIMUM_FAILED_ATTEMPTS:?LOGIN_MAXIMUM_FAILED_ATTEMPTS is required}"
+      LOGIN_LOCK_DURATION: "${LOGIN_LOCK_DURATION:?LOGIN_LOCK_DURATION is required}"
+
       EUREKA_ENABLED: "true"
       EUREKA_URL: "http://discovery-service:8761/eureka/"
 
@@ -314,6 +317,7 @@ services:
       HTTP_CLIENT_CONNECT_TIMEOUT: "2s"
       HTTP_CLIENT_READ_TIMEOUT: "5s"
       IDENTITY_SERVICE_BASE_URL: "lb://identity-service"
+      GATEWAY_SERVICE_BASE_URL: "lb://gateway-service"
       EUREKA_ENABLED: "true"
       EUREKA_URL: "http://discovery-service:8761/eureka/"
 

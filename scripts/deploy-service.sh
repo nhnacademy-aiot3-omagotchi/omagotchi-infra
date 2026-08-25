@@ -20,10 +20,41 @@ COMPOSE_SCRIPT="${SCRIPT_DIR}/compose.sh"
 SMOKE_SCRIPT="${SCRIPT_DIR}/smoke-test.sh"
 RULE_ENGINE_SCRIPT="${SCRIPT_DIR}/rule-engine.sh"
 LOCK_FILE="${ROOT_DIR}/.omagotchi-deploy.lock"
+DEPLOY_LOCK_WAIT_SECONDS=600
 
 usage() {
   echo "사용법: $0 <service> <40-character-commit-sha>" >&2
   echo "서비스: frontend | discovery-service | gateway-service | identity-service | learning-service | rule-service" >&2
+}
+
+# 제한 시간 대기 방식의 배포 File Lock 획득.
+acquire_deploy_lock() {
+  local lock_file="$1"
+  local wait_seconds="$2"
+  local operation_name="$3"
+  local lock_status
+
+  command -v flock >/dev/null 2>&1 || {
+    echo "flock 명령이 없습니다." >&2
+    return 1
+  }
+
+  echo "배포 잠금 대기 시작 (${operation_name}): 최대 ${wait_seconds}초"
+  exec 9>"${lock_file}"
+
+  if flock -w "${wait_seconds}" -E 75 9; then
+    echo "배포 잠금 획득 (${operation_name})"
+    return 0
+  else
+    lock_status=$?
+  fi
+
+  if ((lock_status == 75)); then
+    echo "배포 잠금 획득 시간 초과 (${operation_name}): ${wait_seconds}초" >&2
+  else
+    echo "배포 잠금 획득 실패 (${operation_name}): flock 종료 코드 ${lock_status}" >&2
+  fi
+  return 1
 }
 
 # deploy.env의 단일 Key 조회.
@@ -276,20 +307,14 @@ deploy_service_main() {
     echo "rule-engine.sh를 읽을 수 없습니다." >&2
     exit 1
   }
-  command -v flock >/dev/null 2>&1 || {
-    echo "flock 명령이 없습니다." >&2
-    exit 1
-  }
-
   # shellcheck disable=SC1090
   source "${RULE_ENGINE_SCRIPT}"
 
   # 전체 Infra 배포와 다른 서비스별 배포의 동시 실행 차단.
-  exec 9>"${LOCK_FILE}"
-  flock -n 9 || {
-    echo "다른 배포가 진행 중이므로 즉시 중단합니다." >&2
-    exit 1
-  }
+  acquire_deploy_lock \
+    "${LOCK_FILE}" \
+    "${DEPLOY_LOCK_WAIT_SECONDS}" \
+    "서비스 배포: ${service}" || exit 1
 
   old_tag="$(read_env "${tag_var}" "${DEPLOY_ENV}")"
   base_url="$(read_env SMOKE_BASE_URL "${DEPLOY_ENV}")"

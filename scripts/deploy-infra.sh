@@ -51,11 +51,41 @@ COMPOSE_SCRIPT="${INFRA_DIR}/scripts/compose.sh"
 SMOKE_SCRIPT="${INFRA_DIR}/scripts/smoke-test.sh"
 RULE_ENGINE_SCRIPT="${INFRA_DIR}/scripts/rule-engine.sh"
 LOCK_FILE="${ROOT_DIR}/.omagotchi-deploy.lock"
+DEPLOY_LOCK_WAIT_SECONDS=600
 
 [[ -d "${INFRA_DIR}/.git" ]] || { echo "infra Git 저장소가 아닙니다: ${INFRA_DIR}" >&2; exit 1; }
 [[ -f "${DEPLOY_ENV}" ]] || { echo "deploy.env가 없습니다." >&2; exit 1; }
 [[ -f "${SECRET_ENV}" ]] || { echo "prod.env가 없습니다." >&2; exit 1; }
-command -v flock >/dev/null 2>&1 || { echo "flock 명령이 없습니다." >&2; exit 1; }
+
+# 제한 시간 대기 방식의 배포 File Lock 획득.
+acquire_deploy_lock() {
+  local lock_file="$1"
+  local wait_seconds="$2"
+  local operation_name="$3"
+  local lock_status
+
+  command -v flock >/dev/null 2>&1 || {
+    echo "flock 명령이 없습니다." >&2
+    return 1
+  }
+
+  echo "배포 잠금 대기 시작 (${operation_name}): 최대 ${wait_seconds}초"
+  exec 9>"${lock_file}"
+
+  if flock -w "${wait_seconds}" -E 75 9; then
+    echo "배포 잠금 획득 (${operation_name})"
+    return 0
+  else
+    lock_status=$?
+  fi
+
+  if ((lock_status == 75)); then
+    echo "배포 잠금 획득 시간 초과 (${operation_name}): ${wait_seconds}초" >&2
+  else
+    echo "배포 잠금 획득 실패 (${operation_name}): flock 종료 코드 ${lock_status}" >&2
+  fi
+  return 1
+}
 
 base_url="$(awk -F= '$1 == "SMOKE_BASE_URL" { print substr($0, index($0, "=") + 1); exit }' "${DEPLOY_ENV}")"
 if [[ ! "${base_url}" =~ ^https?://[^[:space:]]+$ ]]; then
@@ -65,8 +95,10 @@ fi
 
 # 전체 Infra 배포와 서비스별 배포의 동시 실행 차단.
 # 동일 Lock File을 사용하는 deploy-service.sh와의 상호 배제.
-exec 9>"${LOCK_FILE}"
-flock -n 9 || { echo "다른 배포가 진행 중이므로 즉시 중단합니다." >&2; exit 1; }
+acquire_deploy_lock \
+  "${LOCK_FILE}" \
+  "${DEPLOY_LOCK_WAIT_SECONDS}" \
+  "Infra 전체 배포" || exit 1
 
 cd "${INFRA_DIR}"
 
