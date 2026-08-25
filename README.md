@@ -84,10 +84,17 @@ shellcheck scripts/*.sh tests/*.sh
 ## 배포 원칙
 
 - 기준 흐름: `feature → dev PR → dev → main PR`
+- 긴급 상황: OrganizationAdmin Ruleset 우회는 비상 절차로만 사용하고, 반영 후 `main` 변경을 `dev`에 즉시 역반영
+- main 승격 조건: 최신 `main`을 반영하고 dev Quality 검증을 통과한 `dev`
+- 서비스 정상 승격: dev Quality 결과 재사용, main Push의 Maven Verify 미실행
+- 서비스 Required Check: `dev`는 `Maven Verify`, `main`은 `Maven Verify and SonarQube`를 적용
+- 서비스 `main` Ruleset: `Require branches to be up to date before merging` 활성화
+- Infra Required Check: `dev`와 `main` 모두 `Validate Compose and Shell`을 적용
 - 서비스 `main`: 이미지 Build·Publish
-- Infra `main`: 구성 검증·승인된 운영 배포
-- 자동 배포 조건: 저장소 변수 `DEPLOY_ENABLED=true`
-- 초기 운영 검증: `DEPLOY_ENABLED=false` 상태의 수동 실행
+- Infra `main`: 구성 검증만 수행
+- Infra 전체 배포: `main` 대상 `workflow_dispatch`와 `DEPLOY_ENABLED=true`를 모두 요구
+- 기본 운영 정책: `DEPLOY_ENABLED=false` 유지, 승인된 전체 배포 시에만 일시 활성화
+- 배포 직렬화: 서비스·Infra 배포가 같은 Lock을 최대 600초 대기
 - Discovery 변경: Eureka Client보다 먼저 배포
 - Rule A/B 변경: 두 Instance 동시 재생성 금지
 - 완료 판단: CI 성공과 실제 운영 Health·Route 검증의 분리
