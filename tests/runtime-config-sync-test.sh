@@ -32,7 +32,7 @@ assert_not_contains() {
 file_mode() {
   local file="$1"
 
-  stat -f '%Lp' "${file}" 2>/dev/null || stat -c '%a' "${file}"
+  stat -c '%a' "${file}" 2>/dev/null || stat -f '%Lp' "${file}"
 }
 
 fixture_root="${TEST_TMP_DIR}/omagotchi"
