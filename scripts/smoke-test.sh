@@ -88,15 +88,8 @@ check_status() {
 }
 
 smoke_test_main() {
-  local skip_rule=false
-
-  if [[ "${1:-}" == "--skip-rule" ]]; then
-    skip_rule=true
-    shift
-  fi
-
   if (( $# != 1 )); then
-    echo "사용법: $0 [--skip-rule] <base-url>" >&2
+    echo "사용법: $0 <base-url>" >&2
     exit 64
   fi
 
@@ -127,13 +120,9 @@ smoke_test_main() {
   check "/health"
   check "/api/health"
 
-  if [[ "${skip_rule}" == "true" ]]; then
-    echo "SKIP GET /api/v1/rules/ping (Rule Engine 제외 배포)"
-  else
-    check "/api/v1/rules/ping"
-  fi
+  check "/api/v1/rules/ping"
 
-  # Rule 미기동 여부와 무관하게 내부 API의 외부 미라우팅 계약 유지.
+  # Rule 내부 API의 외부 미라우팅 계약 유지.
   check_status "/api/v1/internal/engines/self" "404"
   check_status "/api/v1/users/me" "401"
   check_status "/api/v1/cohorts" "401"

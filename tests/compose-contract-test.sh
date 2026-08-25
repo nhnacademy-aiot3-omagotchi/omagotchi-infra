@@ -14,40 +14,17 @@ fail() {
 secret_env="${TEST_TMP_DIR}/prod.env"
 deploy_env="${TEST_TMP_DIR}/deploy.env"
 
-# Rule 전용 값만 제거한 실제 운영 Template 형태.
-grep -Ev \
-  '^(SENSOR_BROKER_URL|SENSOR_USERNAME|SENSOR_PASSWORD|INTERNAL_SHARED_SECRET)=' \
-  "${INFRA_DIR}/.env.prod.example" >"${secret_env}"
-grep -Ev '^RULE_IMAGE_TAG=' "${INFRA_DIR}/deploy.env.example" >"${deploy_env}"
+cp "${INFRA_DIR}/.env.prod.example" "${secret_env}"
+cp "${INFRA_DIR}/deploy.env.example" "${deploy_env}"
 
-if DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${secret_env}" \
-  "${INFRA_DIR}/scripts/compose.sh" config --quiet >/dev/null 2>&1; then
-  fail "전체 Compose 검증이 Rule 전용 설정 없이 허용되었습니다."
-fi
-
-COMPOSE_SKIP_RULE=true \
-  DEPLOY_ENV_FILE="${deploy_env}" \
-  SECRET_ENV_FILE="${secret_env}" \
-  "${INFRA_DIR}/scripts/compose.sh" config --quiet
-
-if ! COMPOSE_SKIP_RULE=true \
-  DEPLOY_ENV_FILE="${deploy_env}" \
+if ! DEPLOY_ENV_FILE="${deploy_env}" \
   SECRET_ENV_FILE="${secret_env}" \
   "${INFRA_DIR}/scripts/compose.sh" config --format json \
   | jq -e '
       .services["learning-service"].environment.INFLUXDB_URL == "https://replace-with-influxdb-host"
       and .services["learning-service"].environment.INFLUXDB_TOKEN == "replace-with-influxdb-token"
       and .services["learning-service"].environment.INFLUXDB_ORG_ID == "replace-with-influxdb-org-id"
-    ' >/dev/null; then
-  fail "Rule 제외 Compose 모드가 Learning의 실제 InfluxDB 설정을 보존하지 않았습니다."
-fi
-
-if ! COMPOSE_SKIP_RULE=true \
-  DEPLOY_ENV_FILE="${deploy_env}" \
-  SECRET_ENV_FILE="${secret_env}" \
-  "${INFRA_DIR}/scripts/compose.sh" config --format json \
-  | jq -e '
-      .services["learning-service"].environment.IDENTITY_SERVICE_BASE_URL == "lb://identity-service"
+      and .services["learning-service"].environment.IDENTITY_SERVICE_BASE_URL == "lb://identity-service"
       and .services["learning-service"].environment.LEARNING_IDENTITY_USERNAME == "learning-service"
       and .services["learning-service"].environment.LEARNING_IDENTITY_PASSWORD == "replace-with-32-to-72-byte-secret"
       and .services["identity-service"].environment.LEARNING_IDENTITY_USERNAME == .services["learning-service"].environment.LEARNING_IDENTITY_USERNAME
@@ -63,28 +40,17 @@ if ! COMPOSE_SKIP_RULE=true \
       and .services["rule-engine-b"].environment.LEARNING_BASE_URL == "http://learning-service:8080"
       and .services["rule-engine-b"].environment.CORE_BASE_URL == null
     ' >/dev/null; then
-  fail "서비스 간 조회 Credential 또는 서비스 주소 계약이 일치하지 않습니다."
+  fail "서비스 설정·Credential 연결 계약이 일치하지 않습니다."
 fi
 
-if COMPOSE_SKIP_RULE=true \
-  DEPLOY_ENV_FILE="${deploy_env}" \
-  SECRET_ENV_FILE="${secret_env}" \
-  "${INFRA_DIR}/scripts/compose.sh" up rule-engine-a >/dev/null 2>&1; then
-  fail "Rule 제외 Compose 모드에서 Rule Engine 기동이 허용되었습니다."
-fi
+grep -Ev \
+  '^(SENSOR_BROKER_URL|SENSOR_USERNAME|SENSOR_PASSWORD|INTERNAL_SHARED_SECRET)=' \
+  "${INFRA_DIR}/.env.prod.example" >"${secret_env}"
+grep -Ev '^RULE_IMAGE_TAG=' "${INFRA_DIR}/deploy.env.example" >"${deploy_env}"
 
-if COMPOSE_SKIP_RULE=true \
-  DEPLOY_ENV_FILE="${deploy_env}" \
-  SECRET_ENV_FILE="${secret_env}" \
-  "${INFRA_DIR}/scripts/compose.sh" up -d >/dev/null 2>&1; then
-  fail "Rule 제외 Compose 모드에서 대상 없는 전체 기동이 허용되었습니다."
-fi
-
-if COMPOSE_SKIP_RULE=invalid \
-  DEPLOY_ENV_FILE="${deploy_env}" \
-  SECRET_ENV_FILE="${secret_env}" \
+if DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${secret_env}" \
   "${INFRA_DIR}/scripts/compose.sh" config --quiet >/dev/null 2>&1; then
-  fail "잘못된 Rule 제외 Compose 모드가 허용되었습니다."
+  fail "Rule 필수 설정 없이 전체 Compose 검증이 허용되었습니다."
 fi
 
-echo "Compose skip-rule tests passed"
+echo "Compose contract tests passed"
