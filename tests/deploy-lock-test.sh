@@ -32,7 +32,7 @@ wait_for_file() {
   fail "Lock 획득 완료 신호를 기다리는 중 시간 초과가 발생했습니다."
 }
 
-for deploy_script in deploy-service.sh deploy-infra.sh; do
+for deploy_script in deploy-service.sh deploy-infra.sh sync-runtime-config.sh; do
   assert_contains 'DEPLOY_LOCK_WAIT_SECONDS=600' \
     "${INFRA_DIR}/scripts/${deploy_script}" \
     "${deploy_script}의 Lock 대기 시간이 600초로 설정되지 않았습니다."
@@ -45,8 +45,12 @@ service_lock_function="$(sed -n '/^acquire_deploy_lock() {$/,/^}$/p' \
   "${INFRA_DIR}/scripts/deploy-service.sh")"
 infra_lock_function="$(sed -n '/^acquire_deploy_lock() {$/,/^}$/p' \
   "${INFRA_DIR}/scripts/deploy-infra.sh")"
+runtime_config_lock_function="$(sed -n '/^acquire_deploy_lock() {$/,/^}$/p' \
+  "${INFRA_DIR}/scripts/sync-runtime-config.sh")"
 [[ "${service_lock_function}" == "${infra_lock_function}" ]] ||
   fail "서비스 배포와 Infra 배포의 Lock 함수가 서로 다릅니다."
+[[ "${service_lock_function}" == "${runtime_config_lock_function}" ]] ||
+  fail "서비스 배포와 Runtime 설정 동기화의 Lock 함수가 서로 다릅니다."
 
 # shellcheck disable=SC1091
 source "${INFRA_DIR}/scripts/deploy-service.sh"
