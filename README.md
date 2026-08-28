@@ -33,7 +33,8 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
 - 범위: DB·Redis·Broker·Token·Credential·내부 API 공유 Secret
 - 공급원: GitHub `production` Environment의 `PROD_ENV` Secret 한 개
 - 운영본: Git 추적 제외, 운영 Host의 `secrets/prod.env`에 마지막 검증 성공본 보관
-- 동기화: `main` 대상 수동 Workflow에서 후보 검증 후 원자적 교체
+- 동기화: Infra `main` 자동 배포 직전에 후보 검증 후 원자적 교체
+- 설정만 변경: `main` 대상 수동 Workflow로 Container 재시작 없이 동기화
 - Redis 저장소: Frontend Session·Learning Presence·Identity Email Verification의 서로 다른 논리 DB 사용
 - 서비스 인증: 호출 관계별 Credential 분리
 - Learning → Identity: 계정 상태·표시 이름 조회 전용 Credential 사용
@@ -94,10 +95,12 @@ shellcheck scripts/*.sh tests/*.sh
 - 서비스 `main` Ruleset: Required Check만 강제하고 `Require branches to be up to date before merging` 비활성화
 - Infra Required Check: `dev`와 `main` 모두 `Validate Compose and Shell`을 적용
 - 서비스 `main`: 이미지 Build·Publish
-- Infra `main`: 구성 검증만 수행
-- Runtime 설정 동기화: `main` 대상 수동 실행, Container·`deploy.env` 변경 없음
-- Infra 전체 배포: `main` 대상 `workflow_dispatch`와 `DEPLOY_ENABLED=true`를 모두 요구
-- 기본 운영 정책: `DEPLOY_ENABLED=false` 유지, 승인된 전체 배포 시에만 일시 활성화
+- Infra `main`: 구성 검증 → Runtime 설정 동기화 → 전체 배포
+- Runtime 설정 동기화: 자동 Infra 배포의 선행 단계, 설정만 바꿀 때는 수동 실행
+- Infra 전체 배포: `main` Push 또는 `workflow_dispatch`와 `DEPLOY_ENABLED=true`를 모두 요구
+- Kill Switch: 평상시 `DEPLOY_ENABLED=true`, 배포 중단이 필요할 때 `false`
+- 자동 배포 Trigger: 운영 구성·Script·배포 Workflow 변경, Test·PR 검증 Workflow만 바뀐 경우 제외
+- Infra 배포 직렬화: main 반영이 연속되어도 하나의 자동 배포 흐름만 실행
 - 배포 직렬화: 서비스·Infra 배포가 같은 Lock을 최대 600초 대기
 - Discovery 변경: Eureka Client보다 먼저 배포
 - Rule A/B 변경: 두 Instance 동시 재생성 금지
