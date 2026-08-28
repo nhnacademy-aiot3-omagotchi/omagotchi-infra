@@ -202,6 +202,14 @@ fi
 rm -f -- "${compose_validation_output}"
 compose_validation_output=""
 
+# 동일한 Runtime 설정의 반복 동기화는 기존 복구본을 덮어쓰지 않음.
+if cmp -s -- "${candidate}" "${SECRET_ENV}"; then
+  rm -f -- "${candidate}"
+  candidate=""
+  echo "Runtime 설정 변경 없음: ${old_sha} -> ${sha}"
+  exit 0
+fi
+
 # 기존 설정의 직전 복구본을 동일 File System에서 원자적으로 확정.
 previous_candidate="$(mktemp "${SECRETS_DIR}/.prod.env.previous.XXXXXX")"
 cp "${SECRET_ENV}" "${previous_candidate}"

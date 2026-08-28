@@ -120,6 +120,22 @@ assert_not_contains 'new-runtime-value' "${output_file}" \
 assert_not_contains 'old-runtime-value' "${output_file}" \
   "기존 Runtime Secret이 동기화 Log에 노출되었습니다."
 
+candidate="${secrets_dir}/.incoming-prod.env.unchanged"
+cp "${secrets_dir}/prod.env" "${candidate}"
+
+if ! SYNC_TEST_EVENTS="${events_file}" PATH="${fake_bin}:${PATH}" \
+  bash "${INFRA_DIR}/scripts/sync-runtime-config.sh" \
+    "${fixture_dir}" "${sha}" "${candidate}" \
+    >"${output_file}" 2>&1; then
+  fail "동일한 Runtime 설정의 반복 동기화가 실패했습니다."
+fi
+
+assert_contains 'CURRENT_SECRET=old-runtime-value' "${secrets_dir}/prod.env.previous" \
+  "동일한 Runtime 설정이 기존 복구본을 덮어썼습니다."
+[[ ! -e "${candidate}" ]] || fail "변경 없는 Runtime 설정 후보가 남았습니다."
+assert_contains 'Runtime 설정 변경 없음' "${output_file}" \
+  "동일한 Runtime 설정의 교체 생략 상태가 명시되지 않았습니다."
+
 printf 'CURRENT_SECRET=stable-runtime-value\n' >"${secrets_dir}/prod.env"
 candidate="${secrets_dir}/.incoming-prod.env.invalid"
 printf 'NEW_SECRET=new-runtime-value\n' >"${candidate}"
