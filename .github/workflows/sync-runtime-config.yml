@@ -1,6 +1,7 @@
 name: Sync Runtime Configuration
 
 on:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
