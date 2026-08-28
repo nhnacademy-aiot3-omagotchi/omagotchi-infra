@@ -122,6 +122,7 @@ fi
 
 # 선택적 Credential의 빈 값 허용과 Key 자체의 필수 존재를 분리.
 sed -E \
+  -e 's/^(IDENTITY_REDIS_USERNAME)=.*/\1=/' \
   -e 's/^(LEARNING_REDIS_USERNAME)=.*/\1=/' \
   -e 's/^(TELEGRAM_BOT_TOKEN)=.*/\1=/' \
   -e 's/^(SENSOR_USERNAME)=.*/\1=/' \
