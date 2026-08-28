@@ -97,7 +97,7 @@ shellcheck scripts/*.sh tests/*.sh
 - 서비스 `main`: 이미지 Build·Publish
 - Infra `main`: 구성 검증 → Runtime 설정 동기화 → 전체 배포
 - Runtime 설정 동기화: 자동 Infra 배포의 선행 단계, 설정만 바꿀 때는 수동 실행
-- Infra 전체 배포: `main` Push 또는 `workflow_dispatch`와 `DEPLOY_ENABLED=true`를 모두 요구
+- Infra 전체 배포: `main` Push와 `workflow_dispatch` 모두 `DEPLOY_ENABLED=true`일 때만 실행
 - Kill Switch: 평상시 `DEPLOY_ENABLED=true`, 배포 중단이 필요할 때 `false`
 - 자동 배포 Trigger: 운영 구성·Script·배포 Workflow 변경, Test·PR 검증 Workflow만 바뀐 경우 제외
 - Infra 배포 직렬화: main 반영이 연속되어도 하나의 자동 배포 흐름만 실행
