@@ -60,7 +60,7 @@ chmod 644 ../secrets/jwt-public.pem
 
 - `prod.env`: 예시 값을 실제 운영 값으로 교체
 - DB·Redis·RabbitMQ·InfluxDB: 운영 Network 기준 주소 사용
-- Redis 논리 DB: Frontend `340`, Learning `341`
+- Redis 논리 DB: Frontend `340`, Learning `341`, Identity Email Verification `342`
 - `INTERNAL_SHARED_SECRET`: Rule Engine A/B 동일 난수
 - `RULE_LEARNING_USERNAME`·`RULE_LEARNING_PASSWORD`: Learning과 Rule Engine A/B에 동일한 관계 전용 Credential 주입
 - `deploy.env`: 발행 완료된 서비스별 `main` Commit SHA 입력
@@ -80,9 +80,10 @@ chmod 644 ../secrets/jwt-public.pem
 
 - 후보 검증: 전체 `prod.env`의 필수값·중복 Key 확인
 - Secret 교체: GitHub `production` Environment의 `PROD_ENV` 전체 교체
-- 동기화 실행: Infra `main`의 `Sync Runtime Configuration` Workflow 수동 실행
+- Infra 변경 동반: Infra `main` 반영 시 자동 배포가 Runtime 설정 동기화 후 전체 배포 수행
+- 설정만 변경: Infra `main`의 `Sync Runtime Configuration` Workflow 수동 실행
 - 결과 확인: Workflow 성공·서버 `prod.env` 권한 `600` 확인
-- 설정 적용: 영향 서비스만 별도 배포
+- 수동 동기화 적용: 영향 서비스만 별도 배포
 
 ### 동기화 처리 순서
 
@@ -90,10 +91,11 @@ chmod 644 ../secrets/jwt-public.pem
 - 배타 실행: 서비스·Infra 배포와 동일한 공용 Lock을 최대 600초 대기
 - Source 동기화: 서버 Infra 저장소를 Workflow의 `main` Revision으로 Fast-forward
 - 설정 검증: 현재 `deploy.env`·후보 `prod.env`의 Compose 설정 검증
+- 변경 없음: 현재 `prod.env`와 동일하면 기존 복구본을 유지하고 교체 생략
 - 직전본 보존: 기존 `prod.env`를 `prod.env.previous`로 백업
 - 설정 확정: 후보 파일의 `prod.env` 원자적 교체·권한 `600` 적용
 
-### 안전 경계
+### 수동 동기화 안전 경계
 
 - 실행 제외: Container 재시작·재생성 및 `deploy.env` 변경
 - Kill Switch 분리: 전체 Infra 배포 전용 `DEPLOY_ENABLED` 미사용
@@ -115,9 +117,10 @@ shellcheck scripts/*.sh tests/*.sh
 - Runtime 설정: 필수 항목·파일 권한 확인
 - Runtime 설정 변경: `Sync Runtime Configuration` 성공 후 서비스별 적용 시점 결정
 - 외부 자원: 운영 Host 기준 Network 연결 확인
-- Infra `main` Push: 구성 검증만 수행하며 전체 배포는 실행하지 않음
-- 전체 배포: `main` 대상 `workflow_dispatch` 실행 전 `DEPLOY_ENABLED=true`로 일시 활성화
-- 배포 종료 후: `DEPLOY_ENABLED=false` 복원
+- Infra `main` Push: 구성 검증·Runtime 설정 동기화 성공 후 전체 배포 실행
+- Kill Switch: 저장소 변수 `DEPLOY_ENABLED=true`일 때만 자동·수동 전체 배포 실행
+- 활성화 시점: Infra main 반영 전에 `DEPLOY_ENABLED=true` 확인, 뒤늦게 바꾼 경우 수동 재실행 필요
+- 배포 중단: 운영 장애나 정비 시 `DEPLOY_ENABLED=false`로 전환
 
 ## 전체 Infra 배포
 
@@ -132,7 +135,11 @@ shellcheck scripts/*.sh tests/*.sh
 - Rule 초기화: 물리 Instance별 순차 기동·역할 안정화
 - Rule 후속 배포: 현재 STANDBY부터 순차 교체
 - Rule 완료 조건: 두 Engine 등록·연속 3회 exactly-one-ACTIVE
-- 배포 실행: `main` 대상 `workflow_dispatch`와 `DEPLOY_ENABLED=true`를 모두 요구
+- 자동 배포: `main` Push와 `DEPLOY_ENABLED=true`를 모두 요구
+- 수동 재실행: `main` 대상 `workflow_dispatch`와 `DEPLOY_ENABLED=true`를 모두 요구
+- Runtime 설정: 자동·수동 전체 배포 모두 GitHub `PROD_ENV` 동기화 성공을 선행 조건으로 사용
+- Trigger 제외: Test와 PR 검증 Workflow만 변경된 main 반영은 전체 배포를 실행하지 않음
+- Workflow 직렬화: 연속 main 반영은 Infra 자동 배포 Workflow 단위로 직렬화
 - 동시 실행: 기존 서비스·Infra 배포가 있으면 공용 Lock을 최대 600초 대기
 - 잠금 시간 초과: 실행 중인 배포를 중단하지 않고 새 배포만 실패
 
