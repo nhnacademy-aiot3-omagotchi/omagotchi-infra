@@ -10,13 +10,16 @@ on:
       - deploy.env.example
       - nginx/**
       - scripts/**
-      - tests/**
-      - .github/workflows/ci.yml
       - .github/workflows/deploy.yml
+      - .github/workflows/sync-runtime-config.yml
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: infra-deploy-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   validate:
@@ -51,12 +54,19 @@ jobs:
             --env-file deploy.env.example \
             config --quiet
 
-  deploy:
-    name: Deploy to School Server
-    # main Push는 검증만 수행. 전체 구성 배포는 수동 실행과 Kill Switch 활성화를 모두 요구.
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' }}
+  sync-runtime-config:
+    name: Sync Runtime Configuration
+    if: ${{ github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' }}
     needs:
       - validate
+    uses: ./.github/workflows/sync-runtime-config.yml
+
+  deploy:
+    name: Deploy to School Server
+    # main Push와 수동 실행 모두 Runtime 설정 동기화 성공 이후에만 전체 구성을 배포.
+    if: ${{ github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' }}
+    needs:
+      - sync-runtime-config
 
     runs-on: ubuntu-latest
     # Lock 대기·Eureka 재등록·Rule A/B 순차 기동의 최대 대기 예산 반영
