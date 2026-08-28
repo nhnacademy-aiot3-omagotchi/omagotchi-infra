@@ -60,7 +60,7 @@ chmod 644 ../secrets/jwt-public.pem
 
 - `prod.env`: 예시 값을 실제 운영 값으로 교체
 - DB·Redis·RabbitMQ·InfluxDB: 운영 Network 기준 주소 사용
-- Redis 논리 DB: Frontend `340`, Learning `341`
+- Redis 논리 DB: Frontend `340`, Learning `341`, Identity Email Verification `342`
 - `INTERNAL_SHARED_SECRET`: Rule Engine A/B 동일 난수
 - `RULE_LEARNING_USERNAME`·`RULE_LEARNING_PASSWORD`: Learning과 Rule Engine A/B에 동일한 관계 전용 Credential 주입
 - `deploy.env`: 발행 완료된 서비스별 `main` Commit SHA 입력
