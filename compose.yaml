@@ -127,6 +127,13 @@ services:
       RULE_LEARNING_USERNAME: "${RULE_LEARNING_USERNAME:?RULE_LEARNING_USERNAME is required}"
       RULE_LEARNING_PASSWORD: "${RULE_LEARNING_PASSWORD:?RULE_LEARNING_PASSWORD is required}"
 
+      # Prediction은 Eureka에 등록하지 않으므로 lb:// 대신 Compose 서비스 이름으로 직접 호출
+      PREDICTION_SERVICE_BASE_URL: "http://prediction-service:8080"
+      PREDICTION_SERVICE_CONNECT_TIMEOUT: "2s"
+      PREDICTION_SERVICE_READ_TIMEOUT: "5s"
+      LEARNING_PREDICTION_USERNAME: "${LEARNING_PREDICTION_USERNAME:?LEARNING_PREDICTION_USERNAME is required}"
+      LEARNING_PREDICTION_PASSWORD: "${LEARNING_PREDICTION_PASSWORD:?LEARNING_PREDICTION_PASSWORD is required}"
+
       JWT_ISSUER: "${JWT_ISSUER:?JWT_ISSUER is required}"
       JWT_AUDIENCE: "${JWT_AUDIENCE:?JWT_AUDIENCE is required}"
       JWT_PUBLIC_KEY_LOCATION: "file:/run/secrets/jwt-public.pem"
@@ -153,6 +160,37 @@ services:
       timeout: 5s
       retries: 12
       start_period: 60s
+    networks:
+      - omagotchi-net
+    restart: unless-stopped
+
+  # 공부시간 예측 전용 Python 서비스.
+  # Learning이 계산한 피처를 받아 예측값만 돌려주는 얇은 서비스로, 원시 학습 기록을 직접 조회하지 않는다.
+  #
+  # Spring 서비스와 다른 점:
+  # - Eureka에 등록하지 않는다. Learning이 Compose 서비스 이름으로 직접 호출한다.
+  # - Actuator가 없어 healthcheck 경로가 /health다.
+  # - SERVER_PORT를 읽지 않고 내부 포트 8080이 고정이다.
+  #
+  # Learning은 이 서비스가 죽어도 기존 규칙으로 폴백하므로 depends_on을 걸지 않는다.
+  prediction-service:
+    image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-prediction-service:${PREDICTION_IMAGE_TAG:?PREDICTION_IMAGE_TAG is required}
+    logging: *default-logging
+    environment:
+      # Learning 호출만 허용하는 관계 전용 Credential.
+      # Learning 쪽 LEARNING_PREDICTION_* 값과 반드시 같아야 한다.
+      LEARNING_PREDICTION_USERNAME: "${LEARNING_PREDICTION_USERNAME:?LEARNING_PREDICTION_USERNAME is required}"
+      LEARNING_PREDICTION_PASSWORD: "${LEARNING_PREDICTION_PASSWORD:?LEARNING_PREDICTION_PASSWORD is required}"
+    expose:
+      - "8080"
+    healthcheck:
+      # Actuator가 아닌 애플리케이션 자체 상태 경로.
+      # 모델과 Credential 로드 실패 시 프로세스가 뜨지 않으므로 응답 자체가 준비 신호다.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     networks:
       - omagotchi-net
     restart: unless-stopped
