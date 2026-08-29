@@ -39,6 +39,11 @@ if ! DEPLOY_ENV_FILE="${deploy_env}" \
       and .services["rule-engine-b"].environment.RULE_LEARNING_PASSWORD == .services["learning-service"].environment.RULE_LEARNING_PASSWORD
       and .services["rule-engine-b"].environment.LEARNING_BASE_URL == "http://learning-service:8080"
       and .services["rule-engine-b"].environment.CORE_BASE_URL == null
+      and .services["learning-service"].environment.PREDICTION_SERVICE_BASE_URL == "http://prediction-service:8080"
+      and .services["learning-service"].environment.LEARNING_PREDICTION_USERNAME == "learning-service"
+      and .services["learning-service"].environment.LEARNING_PREDICTION_PASSWORD == "replace-with-32-to-72-byte-secret"
+      and .services["prediction-service"].environment.LEARNING_PREDICTION_USERNAME == .services["learning-service"].environment.LEARNING_PREDICTION_USERNAME
+      and .services["prediction-service"].environment.LEARNING_PREDICTION_PASSWORD == .services["learning-service"].environment.LEARNING_PREDICTION_PASSWORD
     ' >/dev/null; then
   fail "서비스 설정·Credential 연결 계약이 일치하지 않습니다."
 fi
