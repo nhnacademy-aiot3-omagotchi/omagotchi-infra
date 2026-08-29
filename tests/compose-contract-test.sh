@@ -39,6 +39,9 @@ if ! DEPLOY_ENV_FILE="${deploy_env}" \
       and .services["rule-engine-b"].environment.RULE_LEARNING_PASSWORD == .services["learning-service"].environment.RULE_LEARNING_PASSWORD
       and .services["rule-engine-b"].environment.LEARNING_BASE_URL == "http://learning-service:8080"
       and .services["rule-engine-b"].environment.CORE_BASE_URL == null
+      and .services.frontend.environment.IDENTITY_SERVICE_BASE_URL == "lb://identity-service"
+      and .services.frontend.environment.LEARNING_SERVICE_BASE_URL == "lb://learning-service"
+      and .services.frontend.environment.GATEWAY_SERVICE_BASE_URL == "lb://gateway-service"
     ' >/dev/null; then
   fail "서비스 설정·Credential 연결 계약이 일치하지 않습니다."
 fi
