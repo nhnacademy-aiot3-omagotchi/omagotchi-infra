@@ -35,7 +35,7 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
 - 운영본: Git 추적 제외, 운영 Host의 `secrets/prod.env`에 마지막 검증 성공본 보관
 - 동기화: Infra `main` 자동 배포 직전에 후보 검증 후 원자적 교체
 - 설정만 변경: `main` 대상 수동 Workflow로 Container 재시작 없이 동기화
-- Redis 저장소: Frontend Session·Learning Presence·Identity Email Verification·Identity Authentication Epoch의 서로 다른 논리 DB 사용
+- Redis 저장소: Frontend Session·Learning Presence·Identity Email Verification의 서로 다른 논리 DB 사용
 - 서비스 인증: 호출 관계별 Credential 분리
 - Learning → Identity: 계정 상태·표시 이름 조회 전용 Credential 사용
 - Rule → Learning: 임계치 기준 조회 전용 Credential 사용
