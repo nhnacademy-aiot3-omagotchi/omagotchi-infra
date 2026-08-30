@@ -44,6 +44,9 @@ if ! DEPLOY_ENV_FILE="${deploy_env}" \
       and .services["learning-service"].environment.LEARNING_PREDICTION_PASSWORD == "replace-with-32-to-72-byte-secret"
       and .services["prediction-service"].environment.LEARNING_PREDICTION_USERNAME == .services["learning-service"].environment.LEARNING_PREDICTION_USERNAME
       and .services["prediction-service"].environment.LEARNING_PREDICTION_PASSWORD == .services["learning-service"].environment.LEARNING_PREDICTION_PASSWORD
+      and .services.frontend.environment.IDENTITY_SERVICE_BASE_URL == "lb://identity-service"
+      and .services.frontend.environment.LEARNING_SERVICE_BASE_URL == "lb://learning-service"
+      and .services.frontend.environment.GATEWAY_SERVICE_BASE_URL == "lb://gateway-service"
     ' >/dev/null; then
   fail "서비스 설정·Credential 연결 계약이 일치하지 않습니다."
 fi
