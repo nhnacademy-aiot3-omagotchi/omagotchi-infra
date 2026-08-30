@@ -114,11 +114,16 @@ if DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${candidate_env}" \
 fi
 
 # 빈 값을 허용하지 않는 필수 설정의 Fail-fast 검증.
-sed -E 's/^(JWT_ACCESS_TOKEN_TTL)=.*/\1=/' "${full_secret_env}" >"${candidate_env}"
-if DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${candidate_env}" \
-  "${INFRA_DIR}/scripts/compose.sh" config --quiet >/dev/null 2>&1; then
-  fail "빈 필수 Runtime 설정이 허용되었습니다."
-fi
+for required_key in \
+  JWT_ACCESS_TOKEN_TTL \
+  AUTH_EPOCH_REDIS_USERNAME \
+  AUTH_EPOCH_REDIS_PASSWORD; do
+  sed -E "s/^(${required_key})=.*/\\1=/" "${full_secret_env}" >"${candidate_env}"
+  if DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${candidate_env}" \
+    "${INFRA_DIR}/scripts/compose.sh" config --quiet >/dev/null 2>&1; then
+    fail "빈 필수 Runtime 설정이 허용되었습니다: ${required_key}"
+  fi
+done
 
 # 선택적 Credential의 빈 값 허용과 Key 자체의 필수 존재를 분리.
 sed -E \
@@ -140,8 +145,16 @@ if ! DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${full_secret_env}" \
   | jq -e '
       .services["identity-service"].environment.LOGIN_MAXIMUM_FAILED_ATTEMPTS == "5"
       and .services["identity-service"].environment.LOGIN_LOCK_DURATION == "PT10M"
+      and .services["identity-service"].environment.AUTH_EPOCH_REDIS_HOST == "replace-with-redis-host"
+      and .services["identity-service"].environment.AUTH_EPOCH_REDIS_PORT == "6379"
+      and .services["identity-service"].environment.AUTH_EPOCH_REDIS_DATABASE == "343"
+      and .services["identity-service"].environment.AUTH_EPOCH_REDIS_USERNAME == "replace-with-redis-username"
+      and .services["identity-service"].environment.AUTH_EPOCH_REDIS_PASSWORD == "replace-with-redis-password"
+      and .services["identity-service"].environment.AUTH_EPOCH_REDIS_CONNECT_TIMEOUT == "1s"
+      and .services["identity-service"].environment.AUTH_EPOCH_REDIS_COMMAND_TIMEOUT == "2s"
+      and .services["identity-service"].environment.AUTH_EPOCH_REDIS_SSL_ENABLED == "false"
     ' >/dev/null; then
-  fail "Identity 로그인 보호 설정이 운영 Compose에 전달되지 않았습니다."
+  fail "Identity 로그인 보호·Authentication Epoch Redis 설정이 운영 Compose에 전달되지 않았습니다."
 fi
 
 echo "Runtime configuration ownership tests passed"
