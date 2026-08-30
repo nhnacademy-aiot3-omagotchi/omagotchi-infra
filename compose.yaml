@@ -172,7 +172,7 @@ services:
   # - Actuator가 없어 healthcheck 경로가 /health다.
   # - SERVER_PORT를 읽지 않고 내부 포트 8080이 고정이다.
   #
-  # Learning은 이 서비스가 죽어도 기존 규칙으로 폴백하므로 depends_on을 걸지 않는다.
+  # Learning은 Prediction 장애를 호출 시점의 오류로 전파할 뿐, 기동에는 의존하지 않으므로 depends_on을 걸지 않는다.
   prediction-service:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-prediction-service:${PREDICTION_IMAGE_TAG:?PREDICTION_IMAGE_TAG is required}
     logging: *default-logging
