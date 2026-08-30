@@ -183,10 +183,12 @@ compose up \
   frontend \
   gateway-service \
   identity-service \
-  learning-service
+  learning-service \
+  prediction-service
 
 # Container Healthcheck와 별개인 Eureka 등록 상태 확인.
 # Frontend는 Registry 조회만 수행하고 register-with-eureka=false이므로 확인 대상 제외.
+# Prediction은 Eureka에 등록하지 않고 Compose 서비스 이름으로 직접 호출되므로 확인 대상 제외.
 wait_eureka_application "${DEPLOY_ENV}" "GATEWAY-SERVICE"
 wait_eureka_application "${DEPLOY_ENV}" "IDENTITY-SERVICE"
 wait_eureka_application "${DEPLOY_ENV}" "LEARNING-SERVICE"
