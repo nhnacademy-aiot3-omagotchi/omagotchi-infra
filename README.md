@@ -96,6 +96,7 @@ shellcheck scripts/*.sh tests/*.sh
 - Infra Required Check: `dev`와 `main` 모두 `Validate Compose and Shell`을 적용
 - 서비스 `main`: 이미지 Build·Publish
 - Infra `main`: 구성 검증 → Runtime 설정 동기화 → 전체 배포
+- Nginx Upstream: Docker Embedded DNS를 10초 주기로 재해석해 Container IP 변경 반영
 - Runtime 설정 동기화: 자동 Infra 배포의 선행 단계, 설정만 바꿀 때는 수동 실행
 - Infra 전체 배포: `main` Push와 `workflow_dispatch` 모두 `DEPLOY_ENABLED=true`일 때만 실행
 - Kill Switch: 평상시 `DEPLOY_ENABLED=true`, 배포 중단이 필요할 때 `false`
