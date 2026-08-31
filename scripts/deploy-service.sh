@@ -24,7 +24,7 @@ DEPLOY_LOCK_WAIT_SECONDS=600
 
 usage() {
   echo "사용법: $0 <service> <40-character-commit-sha>" >&2
-  echo "서비스: frontend | discovery-service | gateway-service | identity-service | learning-service | rule-service" >&2
+  echo "서비스: frontend | discovery-service | gateway-service | identity-service | learning-service | rule-service | prediction-service" >&2
 }
 
 # 제한 시간 대기 방식의 배포 File Lock 획득.
@@ -276,6 +276,7 @@ deploy_service_main() {
   identity-service) tag_var="IDENTITY_IMAGE_TAG" ;;
   learning-service) tag_var="LEARNING_IMAGE_TAG" ;;
   rule-service) tag_var="RULE_IMAGE_TAG" ;;
+  prediction-service) tag_var="PREDICTION_IMAGE_TAG" ;;
   *)
     usage
     exit 64
