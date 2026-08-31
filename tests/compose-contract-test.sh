@@ -47,6 +47,10 @@ if ! DEPLOY_ENV_FILE="${deploy_env}" \
       and .services.frontend.environment.IDENTITY_SERVICE_BASE_URL == "lb://identity-service"
       and .services.frontend.environment.LEARNING_SERVICE_BASE_URL == "lb://learning-service"
       and .services.frontend.environment.GATEWAY_SERVICE_BASE_URL == "lb://gateway-service"
+      and .services.frontend.environment.ACCESS_TOKEN_REFRESH_BEFORE_EXPIRY == "30s"
+      and .services.frontend.environment.ACCESS_TOKEN_REFRESH_LOCK_WAIT_TIMEOUT == "20s"
+      and .services.frontend.environment.ACCESS_TOKEN_REFRESH_LOCK_POLL_INTERVAL == "250ms"
+      and .services.frontend.environment.ACCESS_TOKEN_REFRESH_LOCK_LEASE == "45s"
     ' >/dev/null; then
   fail "서비스 설정·Credential 연결 계약이 일치하지 않습니다."
 fi
