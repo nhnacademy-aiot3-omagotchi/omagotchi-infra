@@ -10,6 +10,13 @@ fail() {
   exit 1
 }
 
+assert_contains() {
+  local pattern="$1"
+  local message="$2"
+
+  grep -Fq -- "${pattern}" "${NGINX_CONFIG}" || fail "${message}"
+}
+
 assert_location_returns_404() {
   local location_directive="$1"
 
@@ -40,5 +47,23 @@ assert_location_returns_404() {
 # 정확한 루트와 하위 경로를 모두 차단해야 내부 API가 Gateway 인증 단계에 도달하지 않음.
 assert_location_returns_404 "location = /api/v1/internal {"
 assert_location_returns_404 "location ^~ /api/v1/internal/ {"
+
+# Docker Container IP 변경을 Nginx reload에만 의존하지 않고 주기적으로 재해석.
+assert_contains "resolver 127.0.0.11 valid=10s ipv6=off;" \
+  "Docker Embedded DNS resolver가 누락되었습니다."
+assert_contains "zone frontend_upstream 64k;" \
+  "Frontend 동적 Upstream Zone이 누락되었습니다."
+assert_contains "server frontend:8080 resolve;" \
+  "Frontend Upstream의 동적 DNS 재해석이 누락되었습니다."
+assert_contains "zone gateway_upstream 64k;" \
+  "Gateway 동적 Upstream Zone이 누락되었습니다."
+assert_contains "server gateway-service:8080 resolve;" \
+  "Gateway Upstream의 동적 DNS 재해석이 누락되었습니다."
+assert_contains "proxy_pass http://frontend_upstream;" \
+  "Root Route가 동적 Frontend Upstream을 사용하지 않습니다."
+assert_contains "proxy_pass http://gateway_upstream;" \
+  "API Route가 동적 Gateway Upstream을 사용하지 않습니다."
+assert_contains "proxy_pass http://gateway_upstream/actuator/health;" \
+  "Gateway Health Route가 동적 Upstream을 사용하지 않습니다."
 
 echo "Nginx routing tests passed"
