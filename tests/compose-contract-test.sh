@@ -21,7 +21,14 @@ if ! DEPLOY_ENV_FILE="${deploy_env}" \
   SECRET_ENV_FILE="${secret_env}" \
   "${INFRA_DIR}/scripts/compose.sh" config --format json \
   | jq -e '
-      .services["learning-service"].environment.INFLUXDB_URL == "https://replace-with-influxdb-host"
+      .services["identity-service"].environment.EMAIL_VERIFICATION_CODE_TTL == "PT5M"
+      and .services["identity-service"].environment.EMAIL_VERIFICATION_COOLDOWN == "PT1M"
+      and .services["identity-service"].environment.EMAIL_VERIFICATION_MAXIMUM_FAILED_ATTEMPTS == "5"
+      and .services["identity-service"].environment.EMAIL_VERIFICATION_HMAC_SECRET == "replace-with-32-or-more-character-random-secret"
+      and .services["identity-service"].environment.RESEND_FROM_EMAIL == "Omagotchi <no-reply@omagotchi.site>"
+      and .services["identity-service"].environment.RESEND_CONNECT_TIMEOUT == "PT2S"
+      and .services["identity-service"].environment.RESEND_READ_TIMEOUT == "PT5S"
+      and .services["learning-service"].environment.INFLUXDB_URL == "https://replace-with-influxdb-host"
       and .services["learning-service"].environment.INFLUXDB_TOKEN == "replace-with-influxdb-token"
       and .services["learning-service"].environment.INFLUXDB_ORG_ID == "replace-with-influxdb-org-id"
       and .services["learning-service"].environment.IDENTITY_SERVICE_BASE_URL == "lb://identity-service"
