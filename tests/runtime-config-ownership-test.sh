@@ -124,7 +124,6 @@ fi
 sed -E \
   -e 's/^(IDENTITY_REDIS_USERNAME)=.*/\1=/' \
   -e 's/^(LEARNING_REDIS_USERNAME)=.*/\1=/' \
-  -e 's/^(TELEGRAM_BOT_TOKEN)=.*/\1=/' \
   -e 's/^(SENSOR_USERNAME)=.*/\1=/' \
   -e 's/^(SENSOR_PASSWORD)=.*/\1=/' \
   -e 's/^(SESSION_REDIS_USERNAME)=.*/\1=/' \
