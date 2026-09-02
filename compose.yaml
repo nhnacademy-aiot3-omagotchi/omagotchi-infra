@@ -396,6 +396,8 @@ services:
       # 내부 Service 호출의 timeout과 Discovery
       HTTP_CLIENT_CONNECT_TIMEOUT: "2s"
       HTTP_CLIENT_READ_TIMEOUT: "5s"
+      # AI 채팅(SSE)만 응답 시작이 늦어 별도로 둔다
+      AI_CHAT_READ_TIMEOUT: "30s"
       IDENTITY_SERVICE_BASE_URL: "lb://identity-service"
       LEARNING_SERVICE_BASE_URL: "lb://learning-service"
       GATEWAY_SERVICE_BASE_URL: "lb://gateway-service"
