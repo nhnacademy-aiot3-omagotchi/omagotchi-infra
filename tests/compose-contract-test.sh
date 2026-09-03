@@ -67,7 +67,7 @@ if ! DEPLOY_ENV_FILE="${deploy_env}" \
       and .services["learning-service"].environment.MINIO_ENDPOINT == "replace-with-minio-host"
       and .services["learning-service"].environment.MINIO_ACCESS_KEY == "replace-with-minio-access-key"
       and .services["learning-service"].environment.MINIO_SECRET_KEY == "replace-with-minio-secret-key"
-      and .services["learning-service"].environment.COMMUNITY_ATTACHMENT_BUCKET == "community-attachments"
+      and .services["learning-service"].environment.COMMUNITY_ATTACHMENT_BUCKET == "community-attachment"
       and .services["learning-service"].environment.MINIO_BUCKET == null
       and .services.frontend.environment.IDENTITY_SERVICE_BASE_URL == "lb://identity-service"
       and .services.frontend.environment.LEARNING_SERVICE_BASE_URL == "lb://learning-service"
