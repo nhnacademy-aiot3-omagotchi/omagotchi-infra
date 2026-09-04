@@ -38,6 +38,13 @@ jobs:
         shell: bash
         run: shellcheck scripts/*.sh tests/*.sh
 
+      - name: Validate Nginx configuration
+        shell: bash
+        run: |
+          docker run --rm \
+            --mount type=bind,src="${PWD}/nginx/conf.d",dst=/etc/nginx/conf.d,readonly \
+            nginx:1.30.3-alpine nginx -t
+
       - name: Test deployment scripts
         shell: bash
         run: |

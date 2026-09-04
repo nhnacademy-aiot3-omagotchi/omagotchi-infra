@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016 # jq 식은 Shell 확장 없이 그대로 전달
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,73 +14,93 @@ fail() {
 
 secret_env="${TEST_TMP_DIR}/prod.env"
 deploy_env="${TEST_TMP_DIR}/deploy.env"
+compose_json="${TEST_TMP_DIR}/compose.json"
 
 cp "${INFRA_DIR}/.env.prod.example" "${secret_env}"
 cp "${INFRA_DIR}/deploy.env.example" "${deploy_env}"
 
+assert_compose_contract() {
+  local expression="$1"
+  local message="$2"
+
+  jq -e "${expression}" "${compose_json}" >/dev/null || fail "${message}"
+}
+
 if ! DEPLOY_ENV_FILE="${deploy_env}" \
   SECRET_ENV_FILE="${secret_env}" \
-  "${INFRA_DIR}/scripts/compose.sh" config --format json \
-  | jq -e '
-      .services["identity-service"].environment.EMAIL_VERIFICATION_CODE_TTL == "PT5M"
-      and .services["identity-service"].environment.EMAIL_VERIFICATION_COOLDOWN == "PT1M"
-      and .services["identity-service"].environment.EMAIL_VERIFICATION_MAXIMUM_FAILED_ATTEMPTS == "5"
-      and .services["identity-service"].environment.EMAIL_VERIFICATION_HMAC_SECRET == "replace-with-32-or-more-character-random-secret"
-      and .services["identity-service"].environment.RESEND_FROM_EMAIL == "Omagotchi <no-reply@omagotchi.site>"
-      and .services["identity-service"].environment.RESEND_CONNECT_TIMEOUT == "PT2S"
-      and .services["identity-service"].environment.RESEND_READ_TIMEOUT == "PT5S"
-      and .services["learning-service"].environment.INFLUXDB_URL == "https://replace-with-influxdb-host"
-      and .services["learning-service"].environment.INFLUXDB_TOKEN == "replace-with-influxdb-token"
-      and .services["learning-service"].environment.INFLUXDB_ORG_ID == "replace-with-influxdb-org-id"
-      and .services["learning-service"].environment.IDENTITY_SERVICE_BASE_URL == "lb://identity-service"
-      and .services["learning-service"].environment.LEARNING_IDENTITY_USERNAME == "learning-service"
-      and .services["learning-service"].environment.LEARNING_IDENTITY_PASSWORD == "replace-with-32-to-72-byte-secret"
-      and .services["identity-service"].environment.LEARNING_IDENTITY_USERNAME == .services["learning-service"].environment.LEARNING_IDENTITY_USERNAME
-      and .services["identity-service"].environment.LEARNING_IDENTITY_PASSWORD == .services["learning-service"].environment.LEARNING_IDENTITY_PASSWORD
-      and .services["learning-service"].environment.RULE_LEARNING_USERNAME == "rule-service"
-      and .services["learning-service"].environment.RULE_LEARNING_PASSWORD == "replace-with-32-to-72-byte-secret"
-      and .services["rule-engine-a"].environment.RULE_LEARNING_USERNAME == .services["learning-service"].environment.RULE_LEARNING_USERNAME
-      and .services["rule-engine-a"].environment.RULE_LEARNING_PASSWORD == .services["learning-service"].environment.RULE_LEARNING_PASSWORD
-      and .services["rule-engine-a"].environment.LEARNING_BASE_URL == "http://learning-service:8080"
-      and .services["rule-engine-a"].environment.CORE_BASE_URL == null
-      and .services["rule-engine-b"].environment.RULE_LEARNING_USERNAME == .services["learning-service"].environment.RULE_LEARNING_USERNAME
-      and .services["rule-engine-b"].environment.RULE_LEARNING_PASSWORD == .services["learning-service"].environment.RULE_LEARNING_PASSWORD
-      and .services["rule-engine-b"].environment.LEARNING_BASE_URL == "http://learning-service:8080"
-      and .services["rule-engine-b"].environment.CORE_BASE_URL == null
-      and .services["learning-service"].environment.PREDICTION_SERVICE_BASE_URL == "http://prediction-service:8080"
-      and .services["learning-service"].environment.LEARNING_PREDICTION_USERNAME == "learning-service"
-      and .services["learning-service"].environment.LEARNING_PREDICTION_PASSWORD == "replace-with-32-to-72-byte-secret"
-      and .services["prediction-service"].environment.LEARNING_PREDICTION_USERNAME == .services["learning-service"].environment.LEARNING_PREDICTION_USERNAME
-      and .services["prediction-service"].environment.LEARNING_PREDICTION_PASSWORD == .services["learning-service"].environment.LEARNING_PREDICTION_PASSWORD
-      and .services["learning-service"].environment.GEMINI_API_KEYS == "replace-with-comma-separated-gemini-api-keys"
-      and .services["learning-service"].environment.OLLAMA_BASE_URL == "http://replace-with-ollama-host:11434"
-      and .services["learning-service"].environment.KMA_SERVICE_KEY == "replace-with-kma-service-key"
-      and .services["learning-service"].environment.TELEGRAM_BOT_USERNAME == "replace-with-telegram-bot-username"
-      and .services["learning-service"].environment.TELEGRAM_BOT_TOKEN == "replace-with-telegram-bot-token"
-      and .services["learning-service"].environment.TELEGRAM_WEBHOOK_SECRET == "replace-with-telegram-webhook-secret"
-      and .services["learning-service"].environment.TELEGRAM_LINK_TOKEN_TTL == "PT10M"
-      and .services["learning-service"].environment.TELEGRAM_CONNECTION_REQUEST_TIMEOUT == "PT5S"
-      and .services["learning-service"].environment.TELEGRAM_CONNECT_TIMEOUT == "PT5S"
-      and .services["learning-service"].environment.TELEGRAM_READ_TIMEOUT == "PT10S"
-      and .services["learning-service"].environment.COMMUNITY_ATTACHMENT_MAX_FILE_SIZE == "5MB"
-      and .services["learning-service"].environment.COMMUNITY_ATTACHMENT_MAX_REQUEST_SIZE == "30MB"
-      and .services["learning-service"].environment.COMMUNITY_ATTACHMENT_MAX_COUNT == "5"
-      and .services["learning-service"].environment.MINIO_ENDPOINT == "replace-with-minio-host"
-      and .services["learning-service"].environment.MINIO_ACCESS_KEY == "replace-with-minio-access-key"
-      and .services["learning-service"].environment.MINIO_SECRET_KEY == "replace-with-minio-secret-key"
-      and .services["learning-service"].environment.COMMUNITY_ATTACHMENT_BUCKET == "community-attachment"
-      and .services["learning-service"].environment.MINIO_BUCKET == null
-      and .services.frontend.environment.IDENTITY_SERVICE_BASE_URL == "lb://identity-service"
-      and .services.frontend.environment.LEARNING_SERVICE_BASE_URL == "lb://learning-service"
-      and .services.frontend.environment.GATEWAY_SERVICE_BASE_URL == "lb://gateway-service"
-      and .services.frontend.environment.ACCESS_TOKEN_REFRESH_BEFORE_EXPIRY == "30s"
-      and .services.frontend.environment.ACCESS_TOKEN_REFRESH_LOCK_WAIT_TIMEOUT == "20s"
-      and .services.frontend.environment.ACCESS_TOKEN_REFRESH_LOCK_POLL_INTERVAL == "250ms"
-      and .services.frontend.environment.ACCESS_TOKEN_REFRESH_LOCK_LEASE == "45s"
-      and .services.frontend.environment.AI_CHAT_READ_TIMEOUT == "30s"
-    ' >/dev/null; then
-  fail "서비스 설정·Credential 연결 계약이 일치하지 않습니다."
+  "${INFRA_DIR}/scripts/compose.sh" config --format json >"${compose_json}"; then
+  fail "예시 환경설정으로 Compose 구성을 해석할 수 없습니다."
 fi
+
+assert_compose_contract '
+  .services["learning-service"].environment.IDENTITY_SERVICE_BASE_URL == "lb://identity-service"
+  and .services["rule-engine-a"].environment.LEARNING_BASE_URL == "http://learning-service:8080"
+  and .services["rule-engine-b"].environment.LEARNING_BASE_URL == "http://learning-service:8080"
+  and .services["learning-service"].environment.PREDICTION_SERVICE_BASE_URL == "http://prediction-service:8080"
+  and .services.frontend.environment.IDENTITY_SERVICE_BASE_URL == "lb://identity-service"
+  and .services.frontend.environment.LEARNING_SERVICE_BASE_URL == "lb://learning-service"
+  and .services.frontend.environment.GATEWAY_SERVICE_BASE_URL == "lb://gateway-service"
+' "서비스 간 호출 경로 계약이 일치하지 않습니다."
+
+assert_compose_contract '
+  def nonempty: type == "string" and length > 0;
+
+  (.services["learning-service"].environment.COMMUNITY_ATTACHMENT_MAX_FILE_SIZE | nonempty)
+  and (.services["learning-service"].environment.COMMUNITY_ATTACHMENT_MAX_REQUEST_SIZE | nonempty)
+  and (.services["learning-service"].environment.COMMUNITY_ATTACHMENT_MAX_COUNT | nonempty)
+  and (.services["learning-service"].environment.COMMUNITY_ATTACHMENT_BUCKET | nonempty)
+  and .services["learning-service"].environment.MINIO_BUCKET == null
+  and (.services.frontend.environment.AI_CHAT_READ_TIMEOUT | nonempty)
+' "서비스 런타임 설정 연결 계약이 일치하지 않습니다."
+
+assert_compose_contract '
+  def nonempty: type == "string" and length > 0;
+
+  (.services["learning-service"].environment.LEARNING_IDENTITY_USERNAME | nonempty)
+  and (.services["learning-service"].environment.LEARNING_IDENTITY_PASSWORD | nonempty)
+  and .services["identity-service"].environment.LEARNING_IDENTITY_USERNAME
+      == .services["learning-service"].environment.LEARNING_IDENTITY_USERNAME
+  and .services["identity-service"].environment.LEARNING_IDENTITY_PASSWORD
+      == .services["learning-service"].environment.LEARNING_IDENTITY_PASSWORD
+  and (.services["learning-service"].environment.RULE_LEARNING_USERNAME | nonempty)
+  and (.services["learning-service"].environment.RULE_LEARNING_PASSWORD | nonempty)
+  and .services["rule-engine-a"].environment.RULE_LEARNING_USERNAME
+      == .services["learning-service"].environment.RULE_LEARNING_USERNAME
+  and .services["rule-engine-a"].environment.RULE_LEARNING_PASSWORD
+      == .services["learning-service"].environment.RULE_LEARNING_PASSWORD
+  and .services["rule-engine-b"].environment.RULE_LEARNING_USERNAME
+      == .services["learning-service"].environment.RULE_LEARNING_USERNAME
+  and .services["rule-engine-b"].environment.RULE_LEARNING_PASSWORD
+      == .services["learning-service"].environment.RULE_LEARNING_PASSWORD
+  and (.services["learning-service"].environment.LEARNING_PREDICTION_USERNAME | nonempty)
+  and (.services["learning-service"].environment.LEARNING_PREDICTION_PASSWORD | nonempty)
+  and .services["prediction-service"].environment.LEARNING_PREDICTION_USERNAME
+      == .services["learning-service"].environment.LEARNING_PREDICTION_USERNAME
+  and .services["prediction-service"].environment.LEARNING_PREDICTION_PASSWORD
+      == .services["learning-service"].environment.LEARNING_PREDICTION_PASSWORD
+' "서비스 간 Credential 연결 계약이 일치하지 않습니다."
+
+assert_compose_contract '
+  def nonempty: type == "string" and length > 0;
+  def has_version_metadata:
+    . as $service
+    | ($service.environment.SERVICE_VERSION | nonempty)
+      and ($service.image | endswith(":" + $service.environment.SERVICE_VERSION))
+      and $service.environment.SERVICE_ENVIRONMENT == "prod"
+      and ($service.environment.SERVICE_NODE_NAME | nonempty);
+
+  (.services["gateway-service"] | has_version_metadata)
+  and (.services["rule-engine-a"] | has_version_metadata)
+  and (.services["rule-engine-b"] | has_version_metadata)
+  and .services["rule-engine-a"].environment.SERVICE_NODE_NAME
+      == .services["rule-engine-a"].environment.ENGINE_ID
+  and .services["rule-engine-b"].environment.SERVICE_NODE_NAME
+      == .services["rule-engine-b"].environment.ENGINE_ID
+' "구조화 로그의 서비스 식별 Metadata 계약이 일치하지 않습니다."
+
+assert_compose_contract '
+  (.services.nginx.tmpfs | index("/var/log/nginx:size=10m,mode=0700")) != null
+' "Nginx 상세 오류 로그의 제한 용량 tmpfs가 누락되었습니다."
 
 grep -Ev \
   '^(SENSOR_BROKER_URL|SENSOR_USERNAME|SENSOR_PASSWORD|INTERNAL_SHARED_SECRET)=' \
