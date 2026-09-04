@@ -44,11 +44,11 @@ assert_location_returns_404() {
     fail "Nginx 경로가 404로 차단되지 않았습니다: ${location_directive}"
 }
 
-# 정확한 루트와 하위 경로를 모두 차단해야 내부 API가 Gateway 인증 단계에 도달하지 않음.
+# 내부 API의 정확한 Root·하위 경로 차단
 assert_location_returns_404 "location = /api/v1/internal {"
 assert_location_returns_404 "location ^~ /api/v1/internal/ {"
 
-# Docker Container IP 변경을 Nginx reload에만 의존하지 않고 주기적으로 재해석.
+# Docker Container IP의 주기적 재해석
 assert_contains "resolver 127.0.0.11 valid=10s ipv6=off;" \
   "Docker Embedded DNS resolver가 누락되었습니다."
 assert_contains "zone frontend_upstream 64k;" \
