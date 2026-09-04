@@ -162,6 +162,22 @@ shellcheck scripts/*.sh tests/*.sh
 - 배포 완료 메시지 이전 실패: 부분 적용 가능성 확인
 - Container 상태: `./scripts/compose.sh ps`
 - Service 로그: `./scripts/compose.sh logs -f <service>`
+- Nginx 접근 Event
+  - 명령: `./scripts/compose.sh logs -f nginx`
+  - 확인 대상: stdout의 `nginx.access` JSON
+  - 중앙 수집·알림 대상
+- Nginx 상세 오류
+  - 명령: `./scripts/compose.sh exec -T --user root nginx tail -n 200 /var/log/nginx/error.log`
+  - 저장 위치: 실행 중 Container의 Root 전용 10MB tmpfs
+  - 복구 불가 시점: Container 재시작·재생성·비정상 종료
+  - 10MB 소진 뒤 추가 기록 중단
+  - 장기 보존·감사 로그 사용 금지
+  - 원본 Request Line의 중앙 수집·Issue·PR·메신저 복사 금지
+- Nginx Upstream 시간값
+  - 필드: `nginx.upstream.*_time_seconds`
+  - 미호출: `-`
+  - 재시도: 복수 문자열 가능
+  - 수치 집계 전 정규화 필요
 - 단일 서비스 복구: `deploy.env`의 직전 SHA로 `deploy-service.sh` 실행
 - Rule 복구: Script의 역순 복구 결과·A/B 역할 재확인
 - 기존 `omagotchi-net` 소유 Label 경고: 실행 중 Network 제거 금지, 전체 중단이 가능한 정비 시간에 Compose Network 재생성
