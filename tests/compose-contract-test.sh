@@ -51,7 +51,7 @@ assert_compose_contract '
   and (.services["learning-service"].environment.COMMUNITY_ATTACHMENT_BUCKET | nonempty)
   and .services["learning-service"].environment.MINIO_BUCKET == null
   and .services["learning-service"].environment.OLLAMA_READ_TIMEOUT == "60s"
-  and (.services.frontend.environment.AI_CHAT_READ_TIMEOUT | nonempty)
+  and .services.frontend.environment.AI_CHAT_READ_TIMEOUT == "50s"
 ' "서비스 런타임 설정 연결 계약이 일치하지 않습니다."
 
 assert_compose_contract '
