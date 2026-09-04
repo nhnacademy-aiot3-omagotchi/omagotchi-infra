@@ -150,6 +150,7 @@ services:
       # AI Chat Provider와 날씨 Tool
       GEMINI_API_KEYS: "${GEMINI_API_KEYS:?GEMINI_API_KEYS is required}"
       OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:?OLLAMA_BASE_URL is required}"
+      OLLAMA_READ_TIMEOUT: "60s"
       KMA_SERVICE_KEY: "${KMA_SERVICE_KEY:?KMA_SERVICE_KEY is required}"
 
       # Telegram Bot·Webhook
