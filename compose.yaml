@@ -228,6 +228,9 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
+      SERVICE_VERSION: "${GATEWAY_IMAGE_TAG:?GATEWAY_IMAGE_TAG is required}"
+      SERVICE_ENVIRONMENT: "prod"
+      SERVICE_NODE_NAME: "gateway-service"
 
       # 컨테이너 안의 localhost는 자기 자신이므로
       # Eureka에는 Compose 서비스 이름으로 접근해야 함
@@ -265,6 +268,9 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
+      SERVICE_VERSION: "${RULE_IMAGE_TAG:?RULE_IMAGE_TAG is required}"
+      SERVICE_ENVIRONMENT: "prod"
+      SERVICE_NODE_NAME: "engine-a"
       LEARNING_BASE_URL: "http://learning-service:8080"
       RULE_LEARNING_USERNAME: "${RULE_LEARNING_USERNAME:?RULE_LEARNING_USERNAME is required}"
       RULE_LEARNING_PASSWORD: "${RULE_LEARNING_PASSWORD:?RULE_LEARNING_PASSWORD is required}"
@@ -318,6 +324,9 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
+      SERVICE_VERSION: "${RULE_IMAGE_TAG:?RULE_IMAGE_TAG is required}"
+      SERVICE_ENVIRONMENT: "prod"
+      SERVICE_NODE_NAME: "engine-b"
       LEARNING_BASE_URL: "http://learning-service:8080"
       RULE_LEARNING_USERNAME: "${RULE_LEARNING_USERNAME:?RULE_LEARNING_USERNAME is required}"
       RULE_LEARNING_PASSWORD: "${RULE_LEARNING_PASSWORD:?RULE_LEARNING_PASSWORD is required}"
@@ -428,6 +437,10 @@ services:
     image: nginx:1.30.3-alpine
     container_name: omagotchi-nginx
     logging: *default-logging
+    tmpfs:
+      # 원본 Request Line이 포함될 수 있는 상세 로그의 실행 중 Container 한정 보관
+      # 재시작·재생성 시 삭제, 10MB 소진 뒤 추가 기록 중단
+      - /var/log/nginx:size=10m,mode=0700
     expose:
       - "80"
     volumes:
