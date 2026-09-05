@@ -13,7 +13,11 @@ services:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-discovery-service:${DISCOVERY_IMAGE_TAG:?DISCOVERY_IMAGE_TAG is required}
     logging: *default-logging
     environment:
+      SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8761"
+      SERVICE_VERSION: "${DISCOVERY_IMAGE_TAG:?DISCOVERY_IMAGE_TAG is required}"
+      SERVICE_ENVIRONMENT: "prod"
+      SERVICE_NODE_NAME: "discovery-service"
     expose:
       # 이 컨테이너가 내부에서 사용하는 포트 문서화
       - "8761"
@@ -35,6 +39,9 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
+      SERVICE_VERSION: "${IDENTITY_IMAGE_TAG:?IDENTITY_IMAGE_TAG is required}"
+      SERVICE_ENVIRONMENT: "prod"
+      SERVICE_NODE_NAME: "identity-service"
 
       DB_URL: "${IDENTITY_DB_URL:?IDENTITY_DB_URL is required}"
       DB_USERNAME: "${IDENTITY_DB_USERNAME:?IDENTITY_DB_USERNAME is required}"
@@ -100,6 +107,9 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
+      SERVICE_VERSION: "${LEARNING_IMAGE_TAG:?LEARNING_IMAGE_TAG is required}"
+      SERVICE_ENVIRONMENT: "prod"
+      SERVICE_NODE_NAME: "learning-service"
 
       DB_URL: "${LEARNING_DB_URL:?LEARNING_DB_URL is required}"
       DB_USERNAME: "${LEARNING_DB_USERNAME:?LEARNING_DB_USERNAME is required}"
@@ -203,6 +213,9 @@ services:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-prediction-service:${PREDICTION_IMAGE_TAG:?PREDICTION_IMAGE_TAG is required}
     logging: *default-logging
     environment:
+      SERVICE_VERSION: "${PREDICTION_IMAGE_TAG:?PREDICTION_IMAGE_TAG is required}"
+      SERVICE_ENVIRONMENT: "prod"
+      SERVICE_NODE_NAME: "prediction-service"
       # Learning 호출만 허용하는 관계 전용 Credential.
       # Learning 쪽 LEARNING_PREDICTION_* 값과 반드시 같아야 한다.
       LEARNING_PREDICTION_USERNAME: "${LEARNING_PREDICTION_USERNAME:?LEARNING_PREDICTION_USERNAME is required}"
@@ -380,7 +393,11 @@ services:
     container_name: omagotchi-frontend
     logging: *default-logging
     environment:
+      SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
+      SERVICE_VERSION: "${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG is required}"
+      SERVICE_ENVIRONMENT: "prod"
+      SERVICE_NODE_NAME: "frontend"
 
       # Browser Session Cookie와 만료 정책
       SESSION_COOKIE_NAME: "OMAGOTCHI_SESSION"
