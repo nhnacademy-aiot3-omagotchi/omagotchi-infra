@@ -19,14 +19,25 @@
 - 원문 상세 조사: 기존 Docker `10MB × 3개` 순환 로그
   - Filebeat 탐색에 회전 파일 포함, Docker 보관 범위를 벗어난 로그 복구 불가
 - Data Stream: `logs-omagotchi-prod` 한 개·Primary Shard 한 개
-- ILM: `1일` 또는 `5GB` Rollover, **Rollover 이후 7일** 경과한 Index 삭제
-  - Event 발생 후 정확히 7일 삭제나 전체 저장 용량 상한을 뜻하지 않음
+- ILM: `1일` 또는 Primary `1GB` Rollover, **Rollover 이후 3일** 경과한 Index 삭제
+  - Event 발생 후 정확히 3일 삭제나 전체 저장 용량 상한을 뜻하지 않음
+  - 실제 적용 전의 초기값 조정, 운영 중인 정책의 자동 변경 없음
   - Replica: 학교 기본값 유지, Data Node 한 개일 때 미할당 여부 확인
-- Filebeat: Memory 256MiB·Disk Queue 512MB
+- Filebeat: CPU 0.5·Memory 256MiB·Disk Queue 512MB
   - Queue·Registry의 `filebeat-data` Volume 보존
+  - Queue 상한과 별도로 Registry·Volume 전체 사용량 확인, Volume 자체의 강제 용량 제한 없음
   - 연결 장애의 제한된 완충, 무손실 전달 보장 아님
   - 재전송에 따른 중복 가능, 감사 로그·정확한 업무 건수의 기준으로 사용 금지
   - Mapping 거절: 재시도 없이 Drop 가능, 집계 로그와 로컬 거절 로그로 확인
+- 수집량: Filebeat 전체의 접근 Event `20건/초`·오류 Event `5건/초`, 두 한도의 독립 적용
+  - Container별 한도 아님, 서비스 간 공정 배분·오류 종류별 최소 수집 보장 없음
+  - 제품의 Rate Limit 초과분 즉시 제외, 대기열 저장·나중 재전송 없음
+  - 수집 처리 시각 기준, 밀린 로그 재처리·Container 재시작 시에도 일부 누락 가능
+  - ES 전송 순간의 속도 제한 아님, Queue에 쌓인 Event는 복구 후 묶음 전송 가능
+- 단일 로그: `message_max_bytes=16384`로 16KiB 제한
+  - 초과 부분의 절단, 잘린 JSON의 중앙 수집 제외
+  - Docker 원문은 기존 회전 범위에서만 확인 가능
+- 접근 Event 누락에 따른 중앙 로그 기반 요청 수·오류율 계산 금지, 메트릭 수집 경로 사용
 
 ## 최초 적용 전 확인
 
@@ -123,6 +134,10 @@ set -e
 
 - [Filebeat 8.19 JSON Template](https://www.elastic.co/guide/en/beats/filebeat/8.19/configuration-template.html)
 - [Filebeat 8.19 Elasticsearch Output](https://www.elastic.co/guide/en/beats/filebeat/8.19/elasticsearch-output.html)
+- [Filebeat 8.19 Rate Limit의 초과 Event 제외](https://www.elastic.co/guide/en/beats/filebeat/8.19/rate-limit.html)
+- [Filebeat 8.19 JSON Field 해석](https://www.elastic.co/guide/en/beats/filebeat/8.19/decode-json-fields.html)
+- [Filebeat 8.19 Filestream 메시지 크기 제한](https://www.elastic.co/guide/en/beats/filebeat/8.19/filebeat-input-filestream.html#_message_max_bytes)
+- [Filebeat 8.19.3 전역 Processor 공유](https://github.com/elastic/beats/blob/v8.19.3/libbeat/publisher/processing/default.go)
 - [Filebeat 8.19.3 Docker 라벨 조건 처리](https://github.com/elastic/beats/blob/v8.19.3/libbeat/autodiscover/providers/docker/docker.go)
 - [Filebeat 8.19.3 ILM·Template 초기화 순서](https://github.com/elastic/beats/blob/v8.19.3/libbeat/idxmgmt/index_support.go)
 - [Elasticsearch 8.19 Data Stream·Index·Alias 존재 조회](https://www.elastic.co/guide/en/elasticsearch/reference/8.19/indices-exists.html)

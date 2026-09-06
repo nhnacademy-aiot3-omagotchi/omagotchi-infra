@@ -8,6 +8,7 @@ x-filebeat: &filebeat
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
   mem_limit: 256m
+  cpus: 0.5
   environment:
     ELASTICSEARCH_URL: "${ELASTICSEARCH_URL:?ELASTICSEARCH_URL is required}"
     ELASTICSEARCH_USERNAME: "${ELASTICSEARCH_USERNAME:?ELASTICSEARCH_USERNAME is required}"

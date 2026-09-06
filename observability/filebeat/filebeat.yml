@@ -15,19 +15,23 @@ filebeat.autodiscover:
           config:
             - type: filestream
               id: container-${data.docker.container.id}
+              # 과도한 단일 로그의 중앙 유입 제한. 잘린 JSON은 아래 조건에서 제외.
+              message_max_bytes: 16384
               paths:
                 # 수집기 중지 중 회전한 Docker 로그까지 탐색.
                 - /var/lib/docker/containers/${data.docker.container.id}/*.log*
               parsers:
                 - container:
                     stream: stdout
-                - ndjson:
-                    target: ""
-                    overwrite_keys: true
-                    expand_keys: true
-                    add_error_key: true
 
 processors:
+  # Container 해석·크기 제한 이후의 JSON 해석. Parser에서 먼저 해석하면 큰 필드가 제한을 우회.
+  - decode_json_fields:
+      fields: [message]
+      target: ""
+      overwrite_keys: true
+      expand_keys: true
+      add_error_key: true
   - drop_event:
       when:
         or:
@@ -64,6 +68,16 @@ processors:
         - pipeline.correlation.id
         - trace.id
         - span.id
+  # Filebeat 전체의 접근·오류별 수집량 제한. 초과 Event의 대기·재시도 없이 제외.
+  - if:
+      regexp:
+        event.dataset: '^[^.]+\.error$'
+    then:
+      - rate_limit:
+          limit: "5/s"
+    else:
+      - rate_limit:
+          limit: "20/s"
 
 # 공용 Cluster의 Template·ILM 변경은 최초 초기화에서만 수행.
 setup.ilm.enabled: false
