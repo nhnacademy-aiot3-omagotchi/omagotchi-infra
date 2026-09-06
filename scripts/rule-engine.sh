@@ -4,6 +4,7 @@
 # 직접 실행이 아닌 deploy-infra.sh·deploy-service.sh의 source 대상.
 # Infra 전체 배포의 실제 Container 변경 책임: 호출 Script의 rule_engine_start 함수.
 # 실제 Compose 실행 책임: 호출 Script가 제공하는 rule_compose 함수.
+# exec의 비대화형 실행: SSH로 전달 중인 배포 Script의 표준 입력 소비 방지.
 
 RULE_ENGINE_A="rule-engine-a"
 RULE_ENGINE_B="rule-engine-b"
@@ -72,7 +73,7 @@ rule_engine_role() {
   # 동일 내부 Secret을 사용하는 운영 Container 내부 통신.
   response="$(
     # shellcheck disable=SC2016 # 변수는 Host가 아니라 Container Shell에서 확장
-    rule_compose "${env_file}" exec -T "${service}" sh -ec '
+    rule_compose "${env_file}" exec -T --interactive=false "${service}" sh -ec '
       : "${INTERNAL_SHARED_SECRET:?INTERNAL_SHARED_SECRET is required}"
       curl -fsS \
         --connect-timeout 2 \
@@ -92,7 +93,7 @@ rule_engine_registered() {
 
   # Eureka의 RULE-SERVICE 등록 목록에서 고유 engine-id 존재 여부 확인.
   response="$(
-    rule_compose "${env_file}" exec -T discovery-service \
+    rule_compose "${env_file}" exec -T --interactive=false discovery-service \
       curl -fsS \
       --connect-timeout 2 \
       --max-time 5 \
@@ -109,7 +110,7 @@ eureka_application_registered() {
   local application_name="$2"
 
   # 일반 Eureka Client의 Application 등록 응답 존재 여부 확인.
-  rule_compose "${env_file}" exec -T discovery-service \
+  rule_compose "${env_file}" exec -T --interactive=false discovery-service \
     curl -fsS \
     --connect-timeout 2 \
     --max-time 5 \

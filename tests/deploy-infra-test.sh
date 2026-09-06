@@ -56,6 +56,13 @@ mkdir -p \
   "${fake_bin}"
 printf 'SMOKE_BASE_URL=https://example.invalid\n' >"${fixture_dir}/deploy.env"
 touch "${fixture_dir}/../secrets/prod.env"
+chmod 600 "${fixture_dir}/../secrets/prod.env" "${fixture_dir}/deploy.env"
+
+# 이전 umask 077 배포의 공개 파일 권한 재현.
+cp -R "${INFRA_DIR}/observability" "${fixture_dir}/observability"
+cp "${INFRA_DIR}/scripts/observability-setup.sh" "${fixture_dir}/scripts/"
+chmod -R u=rwX,go= "${fixture_dir}/observability"
+chmod 700 "${fixture_dir}/scripts/observability-setup.sh"
 
 cat >"${fake_bin}/git" <<'EOF'
 #!/usr/bin/env bash
@@ -63,7 +70,8 @@ case "$1" in
   branch) printf 'main\n' ;;
   status) ;;
   rev-parse) printf '0000000000000000000000000000000000000000\n' ;;
-  fetch | cat-file | merge-base | merge) ;;
+  fetch | cat-file | merge-base) ;;
+  merge) mkdir -p checkout-fixture; touch checkout-fixture/public.conf ;;
   *) exit 1 ;;
 esac
 EOF
@@ -76,8 +84,12 @@ EOF
 cat >"${fixture_dir}/scripts/compose.sh" <<'EOF'
 #!/usr/bin/env bash
 printf 'compose:%s\n' "$*" >>"${MODE_TEST_EVENTS}"
+# Compose exec의 기본 stdin 연결 재현. -T만 사용하면 남은 배포 Script 소비.
+if [[ "$1" == "exec" && " $* " != *" --interactive=false "* ]]; then
+  cat >/dev/null
+fi
 if [[ "${MODE_TEST_FAIL_NGINX_RELOAD:-false}" == "true"
-  && "$*" == "exec -T nginx nginx -s reload" ]]; then
+  && "$*" == *"nginx nginx -s reload" ]]; then
   exit 1
 fi
 EOF
@@ -88,9 +100,9 @@ printf 'smoke:%s\n' "$*" >>"${MODE_TEST_EVENTS}"
 EOF
 
 cat >"${fixture_dir}/scripts/rule-engine.sh" <<'EOF'
-wait_eureka_application() {
-  printf 'eureka:%s\n' "$2" >>"${MODE_TEST_EVENTS}"
-}
+# 실제 Eureka 확인 함수 사용, Rule Container 변경만 대역 처리.
+# shellcheck disable=SC1090
+source "${MODE_TEST_RULE_ENGINE}"
 
 rollout_rule_engine_infra() {
   printf 'rule-rollout:%s\n' "$1" >>"${MODE_TEST_EVENTS}"
@@ -108,17 +120,19 @@ if bash "${INFRA_DIR}/scripts/deploy-infra.sh" "${sha}" >/dev/null 2>&1; then
 fi
 
 : >"${events_file}"
-MODE_TEST_EVENTS="${events_file}" PATH="${fake_bin}:${PATH}" \
-  bash "${INFRA_DIR}/scripts/deploy-infra.sh" "${fixture_dir}" "${sha}" \
+# SSH와 같은 파이프 입력으로 전달, 마지막 배포 단계까지 실행 확인.
+cat "${INFRA_DIR}/scripts/deploy-infra.sh" | \
+  MODE_TEST_EVENTS="${events_file}" MODE_TEST_RULE_ENGINE="${INFRA_DIR}/scripts/rule-engine.sh" \
+  PATH="${fake_bin}:${PATH}" bash -s -- "${fixture_dir}" "${sha}" \
   >"${output_file}"
 
-assert_not_contains "eureka:FRONTEND" "${events_file}" \
+assert_not_contains "Eureka 등록 확인: FRONTEND" "${output_file}" \
   "Registry 조회 전용 Frontend의 Eureka 등록을 기다렸습니다."
-assert_contains "eureka:GATEWAY-SERVICE" "${events_file}" \
+assert_contains "Eureka 등록 확인: GATEWAY-SERVICE" "${output_file}" \
   "Gateway의 Eureka 등록 확인이 누락되었습니다."
-assert_contains "eureka:IDENTITY-SERVICE" "${events_file}" \
+assert_contains "Eureka 등록 확인: IDENTITY-SERVICE" "${output_file}" \
   "Identity의 Eureka 등록 확인이 누락되었습니다."
-assert_contains "eureka:LEARNING-SERVICE" "${events_file}" \
+assert_contains "Eureka 등록 확인: LEARNING-SERVICE" "${output_file}" \
   "Learning의 Eureka 등록 확인이 누락되었습니다."
 assert_contains "--remove-orphans" "${events_file}" \
   "전체 배포에서 이전 Rule Container 정리가 누락되었습니다."
@@ -126,17 +140,38 @@ assert_contains "rule-rollout:${fixture_dir}/deploy.env" "${events_file}" \
   "전체 배포에서 Rule 롤아웃이 누락되었습니다."
 assert_contains "smoke:https://example.invalid" "${events_file}" \
   "전체 배포 Smoke Test가 누락되었습니다."
-assert_before "compose:exec -T nginx nginx -t" \
-  "compose:exec -T nginx nginx -s reload" "${events_file}" \
+assert_before "nginx nginx -t" \
+  "nginx nginx -s reload" "${events_file}" \
   "Nginx 설정 검증이 reload보다 먼저 실행되지 않았습니다."
-assert_before "compose:exec -T nginx nginx -s reload" \
+assert_before "nginx nginx -s reload" \
   "smoke:https://example.invalid" "${events_file}" \
   "Nginx reload가 Smoke Test보다 먼저 실행되지 않았습니다."
 assert_contains "인프라 배포 완료" "${output_file}" \
   "전체 배포 완료 상태가 명시되지 않았습니다."
 
+# 기존 관측 파일의 읽기·디렉터리 탐색 권한 복구와 새 Git 파일의 권한 확인.
+for public_file in \
+  "${fixture_dir}/observability/filebeat/filebeat.yml" \
+  "${fixture_dir}/observability/elastalert2/runtime.py" \
+  "${fixture_dir}/checkout-fixture/public.conf"; do
+  mode="$(stat -c '%a' "${public_file}" 2>/dev/null || stat -f '%Lp' "${public_file}")"
+  [[ "${mode}" == 644 ]] || fail "공개 파일의 읽기 권한 복구 실패: ${public_file}"
+done
+for public_directory in \
+  "${fixture_dir}/observability/elasticsearch" \
+  "${fixture_dir}/observability/elastalert2/rules" \
+  "${fixture_dir}/checkout-fixture"; do
+  mode="$(stat -c '%a' "${public_directory}" 2>/dev/null || stat -f '%Lp' "${public_directory}")"
+  [[ "${mode}" == 755 ]] || fail "공개 디렉터리의 탐색 권한 복구 실패: ${public_directory}"
+done
+for private_file in "${fixture_dir}/../secrets/prod.env" "${fixture_dir}/deploy.env"; do
+  mode="$(stat -c '%a' "${private_file}" 2>/dev/null || stat -f '%Lp' "${private_file}")"
+  [[ "${mode}" == 600 ]] || fail "비공개 파일의 권한 변경: ${private_file}"
+done
+
 : >"${events_file}"
 if MODE_TEST_EVENTS="${events_file}" \
+  MODE_TEST_RULE_ENGINE="${INFRA_DIR}/scripts/rule-engine.sh" \
   MODE_TEST_FAIL_NGINX_RELOAD=true \
   PATH="${fake_bin}:${PATH}" \
   bash "${INFRA_DIR}/scripts/deploy-infra.sh" \
