@@ -1,0 +1,40 @@
+{
+  "index_patterns": ["logs-omagotchi-*"],
+  "data_stream": {},
+  "priority": 250,
+  "_meta": { "owner": "omagotchi" },
+  "template": {
+    "settings": {
+      "index.number_of_shards": 1,
+      "index.lifecycle.name": "omagotchi-logs"
+    },
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "message": { "type": "text" },
+        "log.level": { "type": "keyword" },
+        "log.logger": { "type": "keyword" },
+        "service.name": { "type": "keyword" },
+        "service.version": { "type": "keyword" },
+        "service.environment": { "type": "keyword" },
+        "service.node.name": { "type": "keyword" },
+        "event.id": { "type": "keyword" },
+        "event.dataset": { "type": "keyword" },
+        "event.action": { "type": "keyword" },
+        "event.outcome": { "type": "keyword" },
+        "event.duration": { "type": "long" },
+        "http.request.id": { "type": "keyword" },
+        "http.request.method": { "type": "keyword" },
+        "http.response.status_code": { "type": "integer" },
+        "error.code": { "type": "keyword" },
+        "error.type": { "type": "keyword" },
+        "omagotchi.http.route": { "type": "keyword" },
+        "gateway.route.id": { "type": "keyword" },
+        "pipeline.correlation.id": { "type": "keyword" },
+        "trace.id": { "type": "keyword" },
+        "span.id": { "type": "keyword" }
+      }
+    }
+  }
+}

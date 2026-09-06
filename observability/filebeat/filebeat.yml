@@ -1,0 +1,105 @@
+# Docker 포장 해석 후 ECS JSON 해석. 다른 팀·미승인 Container의 입력 생성 금지.
+filebeat.autodiscover:
+  providers:
+    - type: docker
+      host: unix:///var/run/docker.sock
+      labels.dedot: true
+      hints.enabled: false
+      templates:
+        - condition:
+            and:
+              - equals:
+                  docker.container.labels.com.docker.compose.project: omagotchi
+              - equals:
+                  docker.container.labels.co.elastic.logs/enabled: "true"
+          config:
+            - type: filestream
+              id: container-${data.docker.container.id}
+              # 과도한 단일 로그의 중앙 유입 제한. 잘린 JSON은 아래 조건에서 제외.
+              message_max_bytes: 16384
+              paths:
+                # 수집기 중지 중 회전한 Docker 로그까지 탐색.
+                - /var/lib/docker/containers/${data.docker.container.id}/*.log*
+              parsers:
+                - container:
+                    stream: stdout
+
+processors:
+  # Container 해석·크기 제한 이후의 JSON 해석. Parser에서 먼저 해석하면 큰 필드가 제한을 우회.
+  - decode_json_fields:
+      fields: [message]
+      target: ""
+      overwrite_keys: true
+      expand_keys: true
+      add_error_key: true
+  - drop_event:
+      when:
+        or:
+          - equals:
+              error.type: json
+          - not:
+              has_fields: [service.name, log.level, event.dataset]
+          - not:
+              regexp:
+                event.dataset: '^(nginx\.access|[^.]+\.(http|error))$'
+  # 수집 계약이 있는 접근·오류 Event만 저장. 진단·임의 업무 Payload의 유입 차단.
+  # @timestamp는 Filebeat가 기본 보존하는 필드이므로 목록에서 제외.
+  - include_fields:
+      fields:
+        - message
+        - log.level
+        - log.logger
+        - service.name
+        - service.version
+        - service.environment
+        - service.node.name
+        - event.id
+        - event.dataset
+        - event.action
+        - event.outcome
+        - event.duration
+        - http.request.id
+        - http.request.method
+        - http.response.status_code
+        - error.code
+        - error.type
+        - omagotchi.http.route
+        - gateway.route.id
+        - pipeline.correlation.id
+        - trace.id
+        - span.id
+  # Filebeat 전체의 접근·오류별 수집량 제한. 초과 Event의 대기·재시도 없이 제외.
+  - if:
+      regexp:
+        event.dataset: '^[^.]+\.error$'
+    then:
+      - rate_limit:
+          limit: "5/s"
+    else:
+      - rate_limit:
+          limit: "20/s"
+
+# 공용 Cluster의 Template·ILM 변경은 최초 초기화에서만 수행.
+setup.ilm.enabled: false
+setup.template.enabled: false
+output.elasticsearch:
+  hosts: ["${ELASTICSEARCH_URL}"]
+  username: "${ELASTICSEARCH_USERNAME}"
+  password: "${ELASTICSEARCH_PASSWORD}"
+  index: logs-omagotchi-prod
+  proxy_disable: true
+  bulk_max_size: 100
+
+queue.disk:
+  max_size: 512MB
+  read_ahead: 128
+  write_ahead: 128
+
+logging.level: info
+logging.metrics.period: 60s
+logging.event_data.files:
+  path: /usr/share/filebeat/logs
+  name: rejected-events
+  rotateeverybytes: 5242880
+  keepfiles: 2
+  permissions: 0600

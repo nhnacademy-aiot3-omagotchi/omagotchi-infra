@@ -1,0 +1,45 @@
+# 조회·Cursor·재알림·재시도의 제품 기본 기능 사용. 실제 접속값은 환경변수로 주입.
+es_host: localhost
+es_port: 9200
+verify_certs: true
+es_conn_timeout: 10
+rules_folder: /opt/elastalert/omagotchi/rules
+scan_subdirectories: false
+writeback_index: elastalert-omagotchi-status
+run_every:
+  minutes: 1
+# 평상시 수집 지연의 허용 구간. 최초 조회·오래된 Cursor의 재시작 조회에도 적용.
+buffer_time:
+  minutes: 5
+# 재시작 시 5분 이상 지난 Cursor의 재사용 제외. 오래된 오류의 일괄 알림 대신 최근 오류 우선.
+old_query_limit:
+  minutes: 5
+alert_time_limit:
+  minutes: 10
+# 조회당 문서·페이지·동시 실행 수의 제한. 초과 구간의 알림 누락 가능성.
+max_query_size: 100
+max_scrolling_count: 5
+max_threads: 1
+scroll_keepalive: 30s
+# 예상 밖 예외 뒤에도 다음 조회 주기에 실행. 영구 중지 대신 오류 기록·운영자 중지 사용.
+disable_rules_on_error: false
+
+# 전송 라이브러리의 URL·응답 Debug 출력 금지.
+logging:
+  version: 1
+  disable_existing_loggers: false
+  handlers:
+    console:
+      class: logging.StreamHandler
+      stream: ext://sys.stderr
+  root:
+    level: WARNING
+    handlers: [console]
+  loggers:
+    elastalert:
+      # 억제된 오류마다 발생하는 INFO 로그의 재폭주 방지.
+      level: WARNING
+    urllib3:
+      level: WARNING
+    elasticsearch:
+      level: WARNING

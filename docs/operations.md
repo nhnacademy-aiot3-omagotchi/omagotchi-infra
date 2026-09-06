@@ -143,6 +143,38 @@ shellcheck scripts/*.sh tests/*.sh
 - 동시 실행: 기존 서비스·Infra 배포가 있으면 공용 Lock을 최대 600초 대기
 - 잠금 시간 초과: 실행 중인 배포를 중단하지 않고 새 배포만 실패
 
+## 중앙 로그 착수 전 확인
+
+```bash
+bash ./scripts/observability-check.sh
+```
+
+- 실행 위치: 학교 서버의 Infra 저장소
+- 입력: 제공받은 Elasticsearch URL·공용 사용자명·비밀번호
+  - HTTP 주소: 학교 내부 보호망 여부의 명시적 확인
+  - 사설 CA: 학교 CA를 신뢰하도록 설정 후 실행, `-k` 사용 금지
+- 출력: 버전·필요 작업의 허용 여부·Data Node 수·팀 Data Stream 상태
+- 미수행: 계정 생성·권한 변경·Index 생성·로그 조회·Telegram 전송
+- 결과 해석
+  - `403`: 해당 조회의 허용 여부 확인 필요, 새 계정 발급 전제 없음
+  - `404`: 대상 부재 또는 해당 버전의 API 미지원
+  - `true`: 계정에 부여된 권한의 조회 결과, 실제 쓰기 성공 보장 아님
+  - 서버 Host에서의 접속 결과이며 Filebeat·ElastAlert2 Container 통신은 별도 검증
+- 다음 확인
+  - Kibana 화면의 버전
+  - 운영 알림용 Bot·채팅방 선택
+  - 팀 Template·보존 정책·실제 쓰기는 버전 확정 후 연결 단계에서 확인
+- 확인값: 학교 Elasticsearch `8.19.3`·내부 주소 `http://10.116.64.14:9200`
+- 현재 상태: Filebeat·ElastAlert2 기동·초기화 구성 추가, 운영 미적용
+- 적용 절차: [중앙 로그 운영](../observability/README.md)
+  - 별도 `omagotchi-observability` 프로젝트, 앱 배포의 `--remove-orphans`와 분리
+  - 기존 `PROD_ENV`의 관측 항목 세 개 추가, 앱의 필수 설정과 분리
+  - 관측 항목 도입 이후의 일부·전체 누락 시 Runtime 설정 교체 중단
+  - 초기화 Container에서 기존 팀 자원·조회 실패 확인 시 생성 중단
+  - 수집 Label 반영과 Filebeat 수동 기동의 구분
+  - 운영 알림 도입 시 `OPS_TELEGRAM_BOT_TOKEN`·`OPS_TELEGRAM_CHAT_ID` 추가
+  - 알림 상태 저장소의 최초 생성·명시적 알림 기동: [Telegram 운영 절차](../observability/README.md#telegram-오류-알림)
+
 ## 운영 확인
 
 - 모든 대상 Container Healthcheck 통과

@@ -1,0 +1,22 @@
+# 수집 실행과 분리된 Filebeat 내장 초기화 설정. Kibana·기본 filebeat-* 자원 설치 제외.
+setup.ilm:
+  enabled: true
+  policy_name: omagotchi-logs
+  policy_file: /usr/share/filebeat/bootstrap/lifecycle-policy.json
+  overwrite: false
+setup.template:
+  enabled: true
+  overwrite: false
+  name: logs-omagotchi-prod
+  pattern: logs-omagotchi-*
+  json:
+    enabled: true
+    path: /usr/share/filebeat/bootstrap/index-template.json
+    name: logs-omagotchi-prod
+    data_stream: true
+output.elasticsearch:
+  hosts: ["${ELASTICSEARCH_URL}"]
+  username: "${ELASTICSEARCH_USERNAME}"
+  password: "${ELASTICSEARCH_PASSWORD}"
+  index: logs-omagotchi-prod
+  proxy_disable: true
