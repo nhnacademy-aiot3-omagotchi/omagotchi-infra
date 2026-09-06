@@ -236,4 +236,32 @@ for scenario in partial-introduction missing-password removed-all; do
   assert_not_contains 'new-runtime-value' "${output_file}" '관측 설정 검증 실패 시 Secret 노출'
 done
 
+# 알림 도입 이후의 Token·Chat ID 누락 차단. Bot 접속·전송 없이 실제 Compose 해석.
+cp "${TEST_TMP_DIR}/observability.env" "${secrets_dir}/prod.env"
+candidate="${secrets_dir}/.incoming-prod.env.alerts"
+cp "${TEST_TMP_DIR}/observability.env" "${candidate}"
+grep '^OPS_TELEGRAM_' "${INFRA_DIR}/.env.prod.example" >>"${candidate}"
+SYNC_TEST_EVENTS="${events_file}" PATH="${fake_bin}:${PATH}" \
+  bash "${INFRA_DIR}/scripts/sync-runtime-config.sh" \
+    "${fixture_dir}" "${sha}" "${candidate}" >"${output_file}" 2>&1
+cp "${secrets_dir}/prod.env" "${TEST_TMP_DIR}/alerts.env"
+cp "${secrets_dir}/prod.env.previous" "${TEST_TMP_DIR}/alerts-previous.env"
+
+for scenario in missing-chat removed-both empty-token; do
+  candidate="${secrets_dir}/.incoming-prod.env.${scenario}"
+  case "${scenario}" in
+    missing-chat) sed '/^OPS_TELEGRAM_CHAT_ID=/d' "${TEST_TMP_DIR}/alerts.env" >"${candidate}" ;;
+    removed-both) sed '/^OPS_TELEGRAM_/d' "${TEST_TMP_DIR}/alerts.env" >"${candidate}" ;;
+    empty-token) sed 's/^OPS_TELEGRAM_BOT_TOKEN=.*/OPS_TELEGRAM_BOT_TOKEN=/' "${TEST_TMP_DIR}/alerts.env" >"${candidate}" ;;
+  esac
+  if SYNC_TEST_EVENTS="${events_file}" PATH="${fake_bin}:${PATH}" \
+    bash "${INFRA_DIR}/scripts/sync-runtime-config.sh" \
+      "${fixture_dir}" "${sha}" "${candidate}" >"${output_file}" 2>&1; then
+    fail "불완전한 알림 설정의 동기화 허용: ${scenario}"
+  fi
+  cmp -s "${TEST_TMP_DIR}/alerts.env" "${secrets_dir}/prod.env" || fail '알림 설정 오류 후 운영본 변경'
+  cmp -s "${TEST_TMP_DIR}/alerts-previous.env" "${secrets_dir}/prod.env.previous" || fail '알림 설정 오류 후 복구본 변경'
+  assert_contains '후보 운영 알림 설정의 검증에 실패했습니다' "${output_file}" '알림 설정 오류 안내 누락'
+done
+
 echo "Runtime configuration sync tests passed"

@@ -210,6 +210,18 @@ if grep -Eq '^[[:space:]]*(export[[:space:]]+)?ELASTICSEARCH_(URL|USERNAME|PASSW
     exit 1
   fi
 fi
+# 알림은 선택 도입. 도입 시 두 항목 동시 선언, 도입 이후 누락·빈 값 차단.
+if grep -Eq '^[[:space:]]*(export[[:space:]]+)?OPS_TELEGRAM_(BOT_TOKEN|CHAT_ID)[[:space:]]*=' \
+  "${SECRET_ENV}" "${candidate}"; then
+  if ! SECRET_ENV_FILE="${candidate}" \
+    "${INFRA_DIR}/scripts/observability-compose.sh" --profile alerts config --format json \
+    2>"${compose_validation_output}" \
+    | jq -e '.services.elastalert.environment | [.OPS_TELEGRAM_BOT_TOKEN, .OPS_TELEGRAM_CHAT_ID]
+        | all(. != null and length > 0)' >/dev/null 2>>"${compose_validation_output}"; then
+    echo "후보 운영 알림 설정의 검증에 실패했습니다. Bot Token·Chat ID 확인 필요, 기존 설정 유지." >&2
+    exit 1
+  fi
+fi
 rm -f -- "${compose_validation_output}"
 compose_validation_output=""
 

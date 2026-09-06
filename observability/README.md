@@ -165,6 +165,7 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
   - `OPS_TELEGRAM_BOT_TOKEN`: BotFather에서 받은 Token
   - `OPS_TELEGRAM_CHAT_ID`: 운영 그룹의 음수 Chat ID
   - 기존 앱·Elasticsearch 항목 유지, 실제 Token의 Git·채팅 기록 금지
+  - 알림 미도입 시 두 항목 생략 가능, 도입 이후 누락·빈 값은 동기화 단계에서 차단
 - 제품 기본 이미지의 자동 Index 초기화 미사용
   - `runtime.py`: 접속 환경변수 변환·실행 모드 분리
   - `bootstrap.py`: 기존 팀 자원 확인·제품 Mapping과 ILM 적용
