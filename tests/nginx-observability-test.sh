@@ -108,6 +108,19 @@ API_REQUEST_ID="$(response_request_id "API 요청" "${API_HEADERS}")"
 [[ "$(header_value "X-Received-Request-ID" "${API_HEADERS}")" == "${API_REQUEST_ID}" ]] ||
   fail "Gateway 전달값과 응답 Request ID가 일치하지 않습니다."
 
+FRONTEND_HEADERS="${TEMP_DIR}/frontend-headers"
+curl --silent --show-error \
+  --dump-header "${FRONTEND_HEADERS}" \
+  --output /dev/null \
+  --header "X-Request-ID: ${SPOOFED_REQUEST_ID}" \
+  "http://127.0.0.1:${PROXY_PORT}/admin/audit"
+
+FRONTEND_REQUEST_ID="$(response_request_id "Frontend 요청" "${FRONTEND_HEADERS}")"
+[[ "${FRONTEND_REQUEST_ID}" != "${SPOOFED_REQUEST_ID}" ]] ||
+  fail "외부 Request ID가 Frontend 경계에서 교체되지 않았습니다."
+[[ "$(header_value "X-Received-Request-ID" "${FRONTEND_HEADERS}")" == "${FRONTEND_REQUEST_ID}" ]] ||
+  fail "Frontend 전달값과 응답 Request ID가 일치하지 않습니다."
+
 INTERNAL_HEADERS="${TEMP_DIR}/internal-headers"
 INTERNAL_BODY="${TEMP_DIR}/internal-body"
 curl --silent --show-error \
@@ -193,5 +206,16 @@ jq -s -e --arg request_id "${FAILURE_REQUEST_ID}" '
     and ($events[0].event.outcome == "failure")
     and ($events[0].http.response.status_code == 502)
 ' "${EVENT_FILE}" >/dev/null || fail "Nginx Upstream 실패 이벤트가 일치하지 않습니다."
+
+jq -s -e --arg request_id "${FRONTEND_REQUEST_ID}" '
+  [.[] | select(
+    .event.dataset == "nginx.access"
+    and .http.request.id == $request_id
+  )] as $events
+  | ($events | length) == 1
+    and ($events[0].event.outcome == "success")
+    and ($events[0].http.response.status_code == 204)
+    and ($events[0].omagotchi.http.route == "/**")
+' "${EVENT_FILE}" >/dev/null || fail "Frontend 접근 이벤트가 일치하지 않습니다."
 
 echo "Nginx observability tests passed"
