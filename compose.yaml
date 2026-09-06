@@ -1,6 +1,6 @@
 name: omagotchi
 
-# 중앙 로그 수집 도입 전의 Host Disk 보호 기준.
+# 중앙 수집 여부와 별개인 Host Disk 보호 기준.
 # 각 Container의 stdout·stderr를 파일당 10MB, 최대 3개로 순환 보관.
 x-default-logging: &default-logging
   driver: json-file
@@ -10,6 +10,8 @@ x-default-logging: &default-logging
 
 services:
   discovery-service:
+    labels:
+      co.elastic.logs/enabled: "true"
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-discovery-service:${DISCOVERY_IMAGE_TAG:?DISCOVERY_IMAGE_TAG is required}
     logging: *default-logging
     environment:
@@ -34,6 +36,8 @@ services:
     restart: unless-stopped
 
   identity-service:
+    labels:
+      co.elastic.logs/enabled: "true"
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-identity-service:${IDENTITY_IMAGE_TAG:?IDENTITY_IMAGE_TAG is required}
     logging: *default-logging
     environment:
@@ -102,6 +106,8 @@ services:
     restart: unless-stopped
 
   learning-service:
+    labels:
+      co.elastic.logs/enabled: "true"
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-learning-service:${LEARNING_IMAGE_TAG:?LEARNING_IMAGE_TAG is required}
     logging: *default-logging
     environment:
@@ -210,6 +216,8 @@ services:
   #
   # Learning은 Prediction 장애를 호출 시점의 오류로 전파할 뿐, 기동에는 의존하지 않으므로 depends_on을 걸지 않는다.
   prediction-service:
+    labels:
+      co.elastic.logs/enabled: "true"
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-prediction-service:${PREDICTION_IMAGE_TAG:?PREDICTION_IMAGE_TAG is required}
     logging: *default-logging
     environment:
@@ -237,6 +245,8 @@ services:
   # 외부 API 요청의 단일 진입점
   # Eureka에서 rule-service를 조회해 lb://rule-service로 전달
   gateway-service:
+    labels:
+      co.elastic.logs/enabled: "true"
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-gateway-service:${GATEWAY_IMAGE_TAG:?GATEWAY_IMAGE_TAG is required}
     logging: *default-logging
     environment:
@@ -277,6 +287,8 @@ services:
     restart: unless-stopped
 
   rule-engine-a:
+    labels:
+      co.elastic.logs/enabled: "true"
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-rule-service:${RULE_IMAGE_TAG:?RULE_IMAGE_TAG is required}
     logging: *default-logging
     environment:
@@ -333,6 +345,8 @@ services:
     restart: unless-stopped
 
   rule-engine-b:
+    labels:
+      co.elastic.logs/enabled: "true"
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-rule-service:${RULE_IMAGE_TAG:?RULE_IMAGE_TAG is required}
     logging: *default-logging
     environment:
@@ -389,6 +403,8 @@ services:
     restart: unless-stopped
 
   frontend:
+    labels:
+      co.elastic.logs/enabled: "true"
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-frontend:${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG is required}
     container_name: omagotchi-frontend
     logging: *default-logging
@@ -452,6 +468,8 @@ services:
 
   # cloudflared가 전달한 요청을 프론트 또는 Gateway로 분기
   nginx:
+    labels:
+      co.elastic.logs/enabled: "true"
     image: nginx:1.30.3-alpine
     container_name: omagotchi-nginx
     logging: *default-logging

@@ -1,0 +1,51 @@
+name: omagotchi-observability
+
+# 애플리케이션 배포의 --remove-orphans와 분리된 관측 전용 프로젝트.
+x-filebeat: &filebeat
+  image: docker.elastic.co/beats/filebeat:8.19.3
+  user: root
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  mem_limit: 256m
+  environment:
+    ELASTICSEARCH_URL: "${ELASTICSEARCH_URL:?ELASTICSEARCH_URL is required}"
+    ELASTICSEARCH_USERNAME: "${ELASTICSEARCH_USERNAME:?ELASTICSEARCH_USERNAME is required}"
+    ELASTICSEARCH_PASSWORD: "${ELASTICSEARCH_PASSWORD:?ELASTICSEARCH_PASSWORD is required}"
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  filebeat:
+    <<: *filebeat
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - filebeat-data:/usr/share/filebeat/data
+    tmpfs:
+      # Mapping 거절 원인의 짧은 로컬 보관. 중앙 재수집·영구 보관 제외.
+      - /usr/share/filebeat/logs:size=16m,mode=0700
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  # 최초 검토 뒤 명시적으로 실행하는 초기화. 평상시 up에는 포함되지 않는 대상.
+  filebeat-setup:
+    <<: *filebeat
+    profiles: [setup]
+    entrypoint: ["/bin/bash", "/usr/share/filebeat/setup.sh"]
+    command: []
+    volumes:
+      - ../scripts/observability-setup.sh:/usr/share/filebeat/setup.sh:ro
+      - ./filebeat/setup.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./elasticsearch:/usr/share/filebeat/bootstrap:ro
+    tmpfs:
+      - /usr/share/filebeat/data:size=16m,mode=0700
+    restart: "no"
+
+volumes:
+  filebeat-data:
