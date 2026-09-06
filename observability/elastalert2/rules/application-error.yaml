@@ -1,0 +1,36 @@
+name: omagotchi-application-error
+type: frequency
+index: logs-omagotchi-prod
+num_events: 1
+timeframe:
+  minutes: 1
+query_key:
+  - service.name
+  - error.code
+  - error.type
+realert:
+  minutes: 10
+exponential_realert:
+  hours: 1
+filter:
+  - term:
+      log.level: ERROR
+  - term:
+      event.action: http.server.request.failed
+  - wildcard:
+      event.dataset: "*.error"
+  - exists:
+      field: error.code
+# 조회 단계부터 오류 요약·검색 식별자만 선택. 상태 Index에도 상세 원문 저장 금지.
+include:
+  - "@timestamp"
+  - service.name
+  - error.code
+  - error.type
+  - message
+  - omagotchi.http.route
+  - gateway.route.id
+  - http.request.id
+  - trace.id
+alert:
+  - telegram_alert.OperationsTelegramAlerter

@@ -68,7 +68,7 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
 - `scripts/rule-engine.sh`: Rule A/B 상태·역할 검증
 - `scripts/smoke-test.sh`: 외부 Route·인증 경계 확인
 - `scripts/observability-check.sh`: 중앙 로그 연결 전 Elastic 버전·기존 계정의 허용 작업 조회
-- `observability/`: Filebeat 설정·팀 Data Stream·ILM 초기화 설정
+- `observability/`: Filebeat 중앙 로그·ElastAlert2 운영 오류 알림·팀 저장소 초기화
 - `scripts/observability-compose.sh`: 앱 배포와 분리된 중앙 로그 구성 실행
 - `scripts/observability-setup.sh`: 초기화 Container의 기존 자원 확인·내장 Setup 실행
 - `tests/`: Shell 배포 계약 회귀 테스트

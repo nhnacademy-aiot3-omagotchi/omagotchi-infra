@@ -1,11 +1,12 @@
-# 중앙 로그 운영
+# 중앙 로그·오류 알림 운영
 
 ## 현재 범위
 
 - Docker stdout → Filebeat `8.19.3` → 학교 Elasticsearch `8.19.3` → Kibana
 - 업무 서비스·배포와 분리된 `omagotchi-observability` Compose 프로젝트
 - 별도 Logstash·학교 Kubernetes 사용 없음
-- Telegram·메트릭·Collector·Tempo의 후속 적용
+- Elasticsearch 오류 Event → ElastAlert2 `2.31.0` → Telegram 운영 채팅방
+- 메트릭·Collector·Tempo의 후속 적용
 - 현재 상태: 로컬 검증용 구성·운영 미적용
 
 ## 수집·보존 경계
@@ -115,6 +116,27 @@ set -e
   - 오류 대표 Event 검색·진단 Event 및 민감 필드의 부재 확인
 - 관찰: `libbeat.output.events.dropped`·Queue 적체·Container Memory·Data Stream 용량
 
+## 초기 용량 확인·수집 중지 기준
+
+- 팀 관측 Index의 초기 운영 예산: Replica 포함 색인 저장량 합계 `8GiB`
+  - 학교 Cluster의 강제 Quota 아님, Translog·임시 파일 등 전체 Disk 사용량과 구분
+  - 시작 1시간 후·24시간 후 확인, 이후 발생량에 따른 점검 주기 조정
+  - 학교 Disk 부족·ILM 오류·예산 도달 시 Filebeat·ElastAlert2 중지 후 원인 확인
+  - 원인 확인 전 보존 연장·수집량 증대·학교 전역 설정 변경 금지
+- Kibana Dev Tools의 읽기 전용 조회
+  - 팀 로그와 알림 상태만 조회, 다른 팀 Index 제외
+  - `_all.total.store.size_in_bytes`: 두 종류 Index의 Primary·Replica 합계, `8GiB = 8589934592 bytes`
+  - 조회 실패·누락된 값·실패 Shard의 0바이트 간주 금지
+
+```http
+GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_stats/store?filter_path=_all.total.store.size_in_bytes,_shards.failed
+GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=true
+```
+
+- 중지 명령: `./scripts/observability-compose.sh stop filebeat elastalert`
+  - 수집·알림만 중지, 기존 Index 자동 삭제·업무 서비스 중지 없음
+  - 자동 용량 감시·삭제 Script 미도입, 현재 구성만으로 전체 용량 상한 보장 불가
+
 ## 설정 변경·복구
 
 - Filebeat 설정 변경: `./scripts/observability-compose.sh up -d --no-deps --force-recreate filebeat`
@@ -130,7 +152,110 @@ set -e
 - Filebeat 중지 중에도 업무 서비스·Docker Log Rotation 유지
 - Index·ILM·Template 삭제는 별도 판단, 수집 중지와 함께 자동 삭제 금지
 
+## Telegram 오류 알림
+
+### 구성·준비
+
+- 활성화 조건: 중앙 오류 Event의 도착·민감 필드 제외 확인
+- Bot 표시명 제안: `오마고치 운영 알림`
+  - 사용자명 제안: `omagotchi_ops_bot`, BotFather에서 사용 가능 여부 확인
+  - 기존 사용자 기능 Bot과 분리, 운영 전용 그룹에 추가
+  - 발신 전용 구성, 별도 Webhook·Bot 애플리케이션 불필요
+- 기존 `PROD_ENV`에 루트 `.env.prod.example`의 두 항목 추가
+  - `OPS_TELEGRAM_BOT_TOKEN`: BotFather에서 받은 Token
+  - `OPS_TELEGRAM_CHAT_ID`: 운영 그룹의 음수 Chat ID
+  - 기존 앱·Elasticsearch 항목 유지, 실제 Token의 Git·채팅 기록 금지
+- 제품 기본 이미지의 자동 Index 초기화 미사용
+  - `runtime.py`: 접속 환경변수 변환·실행 모드 분리
+  - `bootstrap.py`: 기존 팀 자원 확인·제품 Mapping과 ILM 적용
+  - `telegram_alert.py`: 허용 필드의 평문 전송·Timeout·인증 정보 보호
+  - 조회·Cursor·재알림·재시도: ElastAlert2 기본 기능 사용
+
+### 최초 적용
+
+- 실행 위치: 변경이 반영된 서버의 Infra 디렉터리
+- 선행 조건: `PROD_ENV` 동기화·중앙 오류 검색 확인·운영 그룹 준비
+- 최초 생성 전 확인: 아래 이름의 기존 Index·Alias·Template·ILM 부재
+  - `elastalert-omagotchi-status`와 `_status`·`_silence`·`_error`·`_past`의 다섯 Alias
+  - 각 Alias 이름의 Template·`<Alias>-000001` 형식의 실제 Index
+  - ILM `omagotchi-alert-state`
+- 기존 자원·403·연결 실패 시 쓰기 시작 전 중단
+  - 부분 생성 후 자동 삭제·덮어쓰기·재시도 금지, 현재 자원 확인 후 복구 판단
+  - 다른 팀 Template과의 우선순위 충돌 시 임의 증대 금지
+  - 초기화의 단독 실행, 동시 실행의 원자적 잠금 보장 없음
+
+```bash
+bash -c '
+set -e
+./scripts/observability-compose.sh --profile alerts config --quiet
+./scripts/observability-compose.sh run --rm --no-deps elastalert-setup
+./scripts/observability-compose.sh up -d --no-deps elastalert
+./scripts/observability-compose.sh ps
+./scripts/observability-compose.sh logs --tail=50 --no-color elastalert
+'
+```
+
+- 최초 상태 생성에는 Telegram 전송 없음
+- 알림 Container 시작 시 최근 5분의 기존 오류도 알림 대상
+- 평상시 기동: 다섯 Alias의 쓰기 대상만 확인, 자동 Index 생성·초기화 없음
+- 준비 실패: 잘못된 설정·기존 자원·누락된 Alias의 안전한 사유 안내
+  - 인증 실패 `401`·작업 권한 부족 `403`·자원 부재 `404`의 구분
+  - 외부 예외의 응답·URL·인증값 출력 제외
+  - 생성 도중 실패 시 부분 생성 상태 확인, `elastalert-setup`의 무조건 재실행 금지
+- Filebeat만 실행하는 기존 명령의 알림 Container 자동 기동 없음
+
+### 알림·자원 경계
+
+- 대상: `ERROR`·`*.error`·`http.server.request.failed`·`error.code` 존재
+  - 일반 `5xx` 접근 로그·`WARN`·상세 진단 로그 제외
+- 그룹: 서비스·오류 코드·오류 종류
+  - 첫 대표 오류 한 건, 같은 그룹 10분 재알림 억제
+  - 반복 지속 시 최대 1시간까지 재알림 간격 증가
+  - 억제 건수 요약·모든 그룹 합계의 전역 전송량 상한 아님
+- 메시지: 시각·서비스·오류 종류·안전한 요약·경로·Request ID·Trace ID·KQL·Space 링크
+  - Stack Trace·Body·Cookie·Token 제외, Markdown/HTML 해석 없음
+  - `message`는 앱의 안전한 요약 계약 전제, 임의 문자열의 자동 민감정보 판별 기능 아님
+- 전송: HTTPS·Redirect 차단·연결 3초/읽기 5초 Timeout
+  - 전송 실패 시 원본 URL·응답·예외 내용 미출력
+  - 전송기 내부 재시도 없음, 제품 재시도 대상 기간 10분
+  - Timeout 이후 재전송의 중복 가능, 정확히 한 번 전달 보장 없음
+- 조회: 1분 주기·5분 지연 허용 구간·페이지당 100건·추가 Scroll 제한 5회·동시 Rule 1개
+  - 제한 초과·5분을 넘는 수집 지연의 알림 누락 가능성
+- 예상 밖 Rule 예외: 오류 기록 후 다음 1분 조회 주기의 실행 유지
+  - `disable_rules_on_error: false`, 예외 한 번으로 Rule의 영구 중지 방지
+  - 해당 회차의 완전한 재처리·무손실 보장 아님
+  - 지속 실패는 중지·설정 수정 대상, 자체 무한 즉시 재시도 Loop 미사용
+- Container: Memory 256MiB·CPU 0.5·tmpfs 16MiB·자체 로그 `10MB × 3개`
+  - Host Port·Docker Socket·앱 Network 미사용
+  - 억제 건별 INFO 로그 제외, 오류만 로컬 출력
+- 상태 보존: 각 Alias의 `1일` 또는 Primary `100MB` Rollover·전환 이후 `3일` 삭제
+  - Cursor·억제 상태·실패 알림의 무기한 누적 방지
+  - 모든 상태 Index의 합계 용량 상한은 아님, 학교 ES 자원 제한과 별개
+  - 짧은 재알림·재시도 기간을 넘는 상태 보존, 수동 장기 Silence 미지원
+
+### 확인·중지
+
+- 대표 오류 한 건의 Telegram 수신·KQL 검색 확인
+- 동일 오류 반복 시 억제·다른 오류 코드의 별도 알림 확인
+- 상태 Alias의 ILM 적용·용량 및 경고 로그 확인
+- 알림이 오지 않을 때: `ps`만으로 정상 판정 금지
+  1. Kibana에서 최근 `*.error` Event의 도착 확인
+  2. `./scripts/observability-compose.sh logs --since=10m --tail=100 --no-color elastalert`로 전송·조회 오류 확인
+  3. 반복되는 같은 내부 예외라면 아래 중지 명령 실행 후 설정·코드 원인 확인
+  4. 수정 후 Container 재생성·새로운 대표 오류 한 건의 수신 확인
+- 알림 중지: `./scripts/observability-compose.sh stop elastalert`
+- 설정·Token 교체: `PROD_ENV` 동기화 후 `./scripts/observability-compose.sh up -d --no-deps --force-recreate elastalert`
+  - 초기화 재실행 금지, 설정 중지 목적으로 Token 항목 삭제 금지
+- 알림 장애 시 Filebeat·업무 서비스의 독립 실행 유지
+- 로컬 검증: `./tests/elastalert-test.sh`
+  - 외부 Network 없이 실제 제품 Rule 해석·팀 확장 검증
+  - 실제 Bot Token의 통신·운영 그룹 수신은 별도 확인
+
 ## 근거
+
+- [ElastAlert2 공식 Alerter 확장](https://elastalert2.readthedocs.io/en/latest/recipes/adding_alerts.html)
+- [ElastAlert2 2.31.0 Telegram 전송기](https://github.com/jertel/elastalert2/blob/elastalert2-2.31.0/elastalert/alerters/telegram.py)
+- [ElastAlert2 2.31.0 상태 Mapping·초기화](https://github.com/jertel/elastalert2/blob/elastalert2-2.31.0/elastalert/create_index.py)
 
 - [Filebeat 8.19 JSON Template](https://www.elastic.co/guide/en/beats/filebeat/8.19/configuration-template.html)
 - [Filebeat 8.19 Elasticsearch Output](https://www.elastic.co/guide/en/beats/filebeat/8.19/elasticsearch-output.html)
@@ -138,6 +263,8 @@ set -e
 - [Filebeat 8.19 JSON Field 해석](https://www.elastic.co/guide/en/beats/filebeat/8.19/decode-json-fields.html)
 - [Filebeat 8.19 Filestream 메시지 크기 제한](https://www.elastic.co/guide/en/beats/filebeat/8.19/filebeat-input-filestream.html#_message_max_bytes)
 - [Filebeat 8.19.3 전역 Processor 공유](https://github.com/elastic/beats/blob/v8.19.3/libbeat/publisher/processing/default.go)
+- [ElastAlert2 Rule 예외 처리](https://elastalert2.readthedocs.io/en/latest/configuration.html)
+- [Elasticsearch 8.19 Index 저장량 조회](https://www.elastic.co/guide/en/elasticsearch/reference/8.19/indices-stats.html)
 - [Filebeat 8.19.3 Docker 라벨 조건 처리](https://github.com/elastic/beats/blob/v8.19.3/libbeat/autodiscover/providers/docker/docker.go)
 - [Filebeat 8.19.3 ILM·Template 초기화 순서](https://github.com/elastic/beats/blob/v8.19.3/libbeat/idxmgmt/index_support.go)
 - [Elasticsearch 8.19 Data Stream·Index·Alias 존재 조회](https://www.elastic.co/guide/en/elasticsearch/reference/8.19/indices-exists.html)

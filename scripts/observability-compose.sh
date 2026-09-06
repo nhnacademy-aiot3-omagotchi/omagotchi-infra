@@ -14,6 +14,7 @@ SECRET_ENV_FILE="${SECRET_ENV_FILE:-${INFRA_DIR}/../secrets/prod.env}"
 
 # 호출 셸의 export 값보다 검토된 prod.env 우선.
 unset ELASTICSEARCH_URL ELASTICSEARCH_USERNAME ELASTICSEARCH_PASSWORD
+unset OPS_TELEGRAM_BOT_TOKEN OPS_TELEGRAM_CHAT_ID
 # 이전 셸의 Profile 설정에 따른 초기화 Service의 우발적 기동 방지.
 unset COMPOSE_PROFILES
 

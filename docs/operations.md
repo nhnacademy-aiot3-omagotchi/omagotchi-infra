@@ -165,13 +165,15 @@ bash ./scripts/observability-check.sh
   - 운영 알림용 Bot·채팅방 선택
   - 팀 Template·보존 정책·실제 쓰기는 버전 확정 후 연결 단계에서 확인
 - 확인값: 학교 Elasticsearch `8.19.3`·내부 주소 `http://10.116.64.14:9200`
-- 현재 상태: Filebeat 기동·내장 초기화 구성 추가, 운영 미적용·ElastAlert2 후속 보완
+- 현재 상태: Filebeat·ElastAlert2 기동·초기화 구성 추가, 운영 미적용
 - 적용 절차: [중앙 로그 운영](../observability/README.md)
   - 별도 `omagotchi-observability` 프로젝트, 앱 배포의 `--remove-orphans`와 분리
   - 기존 `PROD_ENV`의 관측 항목 세 개 추가, 앱의 필수 설정과 분리
   - 관측 항목 도입 이후의 일부·전체 누락 시 Runtime 설정 교체 중단
   - 초기화 Container에서 기존 팀 자원·조회 실패 확인 시 생성 중단
   - 수집 Label 반영과 Filebeat 수동 기동의 구분
+  - 운영 알림 도입 시 `OPS_TELEGRAM_BOT_TOKEN`·`OPS_TELEGRAM_CHAT_ID` 추가
+  - 알림 상태 저장소의 최초 생성·명시적 알림 기동: [Telegram 운영 절차](../observability/README.md#telegram-오류-알림)
 
 ## 운영 확인
 
