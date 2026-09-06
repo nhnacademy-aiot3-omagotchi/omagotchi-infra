@@ -24,7 +24,7 @@ endpoint=""
 while (( $# )); do
   case "$1" in
     --head) method=HEAD ;;
-    --url) shift; endpoint="${1#"${ELASTICSEARCH_URL}"}" ;;
+    --url) shift; endpoint="${1#"${ELASTICSEARCH_URL%/}"}" ;;
   esac
   shift
 done
@@ -84,6 +84,32 @@ done <<'EOF'
 /_ilm/policy/omagotchi-logs 500 blocked
 /logs-omagotchi-prod 302 blocked
 /logs-omagotchi-prod timeout blocked
+EOF
+
+# 알림 실행기와 같은 루트 URL 계약. 하위 경로의 네트워크 요청·초기화 차단.
+while read -r elastic_url expected; do
+  : >"${TEST_TMP_DIR}/events"
+  result=blocked
+  if ELASTICSEARCH_URL="${elastic_url}" \
+    ELASTICSEARCH_USERNAME=fixture-user ELASTICSEARCH_PASSWORD=fixture-password \
+    SETUP_TEST_ENDPOINT=/ SETUP_TEST_STATUS=200 \
+    SETUP_TEST_EVENTS="${TEST_TMP_DIR}/events" PATH="${TEST_TMP_DIR}/bin:${PATH}" \
+    bash "${INFRA_DIR}/scripts/observability-setup.sh" >"${TEST_TMP_DIR}/output" 2>&1; then
+    result=allowed
+  fi
+  [[ "${result}" == "${expected}" ]] || fail "URL 허용 여부 오류: ${elastic_url}"
+  if [[ "${expected}" == blocked ]]; then
+    [[ ! -s "${TEST_TMP_DIR}/events" ]] || fail '잘못된 URL의 네트워크 요청·초기화 실행'
+    grep -Fq '루트 URL' "${TEST_TMP_DIR}/output" || fail 'URL 형식 오류 안내 누락'
+  fi
+done <<'EOF'
+http://example.invalid:9200 allowed
+http://example.invalid:9200/ allowed
+https://example.invalid:9200 allowed
+https://example.invalid:9200/ allowed
+http://example.invalid:9200/elasticsearch blocked
+http://example.invalid:9200/elasticsearch/ blocked
+http://example.invalid:9200// blocked
 EOF
 
 echo '중앙 로그 최초 초기화 보호 테스트 통과'

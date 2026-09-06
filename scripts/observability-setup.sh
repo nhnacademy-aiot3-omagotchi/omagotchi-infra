@@ -7,9 +7,9 @@ set -euo pipefail
 : "${ELASTICSEARCH_USERNAME:?ELASTICSEARCH_USERNAME is required}"
 : "${ELASTICSEARCH_PASSWORD:?ELASTICSEARCH_PASSWORD is required}"
 
-if [[ ! "${ELASTICSEARCH_URL}" =~ ^https?://[^/?#@[:space:]]+(/[^?#@[:space:]]*)?$ \
+if [[ ! "${ELASTICSEARCH_URL}" =~ ^https?://[^/?#@[:space:]]+/?$ \
   || "${ELASTICSEARCH_USERNAME}" == *:* ]]; then
-  echo 'Elasticsearch URL·사용자명 형식 오류. 초기화 중단.' >&2
+  echo 'Elasticsearch URL·사용자명 형식 오류. 루트 URL·콜론 없는 사용자명만 허용, 초기화 중단.' >&2
   exit 1
 fi
 

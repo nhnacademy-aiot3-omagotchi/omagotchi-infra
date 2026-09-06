@@ -16,9 +16,9 @@ done
 read -r -p 'Elasticsearch URL (http:// 또는 https:// 포함): ' elastic_url
 read -r -p '기존 공용 계정 이름: ' elastic_user
 
-if [[ ! "${elastic_url}" =~ ^https?://[^/?#@[:space:]]+(/[^?#@[:space:]]*)?$ \
+if [[ ! "${elastic_url}" =~ ^https?://[^/?#@[:space:]]+/?$ \
   || -z "${elastic_user}" || "${elastic_user}" == *:* ]]; then
-  echo 'URL·사용자명 확인 필요: URL 내 Credential·Query 금지, 사용자명 내 콜론 금지.' >&2
+  echo 'URL·사용자명 확인 필요: 루트 URL만 허용, URL 내 Credential·Query 및 사용자명 내 콜론 금지.' >&2
   exit 1
 fi
 elastic_url="${elastic_url%/}"
@@ -50,9 +50,9 @@ check_endpoint() {
     request_arguments+=(--header 'Content-Type: application/json' --data "${body}")
   fi
 
-  # 인증 Header의 stdin 전달. 사용자 curl 설정·Redirect에 따른 의도하지 않은 전송 방지.
+  # 인증 Header의 stdin 전달. 사용자 curl 설정·Redirect·Proxy에 따른 의도하지 않은 전송 방지.
   if response="$(printf 'header = "Authorization: Basic %s"\n' "${authorization}" \
-    | curl --disable --config - "${request_arguments[@]}" 2>/dev/null)"; then
+    | curl --disable --config - --noproxy '*' "${request_arguments[@]}" 2>/dev/null)"; then
     status="${response##*$'\n'}"
     response="${response%$'\n'*}"
   else
