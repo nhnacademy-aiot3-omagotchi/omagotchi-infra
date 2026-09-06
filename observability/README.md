@@ -40,6 +40,18 @@
   - Docker 원문은 기존 회전 범위에서만 확인 가능
 - 접근 Event 누락에 따른 중앙 로그 기반 요청 수·오류율 계산 금지, 메트릭 수집 경로 사용
 
+## 현재 운영의 보안 제약
+
+- 학교 제공 HTTP·공용 `elastic` 계정 사용
+  - 내부 IP 경로도 암호화된 통신은 아님, 인증 정보·로그의 전송 중 노출 위험
+  - `elastic`은 Superuser, 계정 유출 시 팀 저장소 밖의 학교 공용 자원까지 영향 가능
+  - 이번 구성의 별도 계정·TLS 도입 없음, 팀 자원만 다루는 코드가 계정 권한 자체를 제한하는 것은 아님
+- Filebeat의 Docker Socket Mount 유지
+  - `:ro`는 Docker API의 조회·변경 요청을 구분하는 권한 제한이 아님
+  - Filebeat 침해 시 Docker Daemon을 통한 공유 Host 통제 가능성
+  - 공식 이미지·버전 고정·Capability 제한만으로 해당 위험 제거 불가
+  - Filebeat를 신뢰하는 운영 구성요소로 취급, 별도 Socket 접근 제어 Proxy는 이번 범위에서 제외
+
 ## 최초 적용 전 확인
 
 1. Infra 변경의 검토·승격·서버 반영
@@ -47,6 +59,8 @@
    - 기존 순차 배포 절차 유지, Filebeat의 자동 시작 없음
 2. 읽기 전용 확인: `bash ./scripts/observability-check.sh`
    - URL: `http://10.116.64.14:9200`, 기존 공용 계정 사용
+   - 연결 확인·초기화·알림 실행 모두 루트 URL만 허용, 끝의 `/` 유무는 무관
+   - `/elasticsearch` 같은 하위 경로·Query·URL 내 인증 정보 사용 금지
    - 내부 경로 확인: `10.116.64.11` → `10.116.64.14`, `eno2`
    - HTTP의 암호화 없음, 인터넷 경유 주소로 대체 금지
    - Data Stream·Template·ILM의 최초 부재 확인
@@ -197,7 +211,12 @@ set -e
 ```
 
 - 최초 상태 생성에는 Telegram 전송 없음
-- 알림 Container 시작 시 최근 5분의 기존 오류도 알림 대상
+- 알림 Container 시작·재시작의 조회 범위
+  - 최초 시작 또는 마지막 조회 시각이 5분 이상 지난 경우: 최근 5분부터 조회
+  - 마지막 조회 시각이 5분 미만 지난 경우: 저장된 시각부터 조회 재개
+  - 예: 마지막 조회 후 20분 뒤 재시작 시 앞선 15분의 오류는 알림 대상에서 제외
+  - 오래된 오류의 일괄 알림 대신 최근 오류 우선, 중단 구간의 전체 알림 복구 보장 없음
+  - 알림 제외와 로그 삭제는 별개, 수집·보존된 오류의 Kibana 검색 가능
 - 평상시 기동: 다섯 Alias의 쓰기 대상만 확인, 자동 Index 생성·초기화 없음
 - 준비 실패: 잘못된 설정·기존 자원·누락된 Alias의 안전한 사유 안내
   - 인증 실패 `401`·작업 권한 부족 `403`·자원 부재 `404`의 구분
@@ -257,6 +276,7 @@ set -e
 - [ElastAlert2 공식 Alerter 확장](https://elastalert2.readthedocs.io/en/latest/recipes/adding_alerts.html)
 - [ElastAlert2 2.31.0 Telegram 전송기](https://github.com/jertel/elastalert2/blob/elastalert2-2.31.0/elastalert/alerters/telegram.py)
 - [ElastAlert2 2.31.0 상태 Mapping·초기화](https://github.com/jertel/elastalert2/blob/elastalert2-2.31.0/elastalert/create_index.py)
+- [ElastAlert2 2.31.0 재시작 조회 범위](https://github.com/jertel/elastalert2/blob/elastalert2-2.31.0/elastalert/elastalert.py)
 
 - [Filebeat 8.19 JSON Template](https://www.elastic.co/guide/en/beats/filebeat/8.19/configuration-template.html)
 - [Filebeat 8.19 Elasticsearch Output](https://www.elastic.co/guide/en/beats/filebeat/8.19/elasticsearch-output.html)

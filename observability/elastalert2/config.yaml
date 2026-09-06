@@ -8,8 +8,10 @@ scan_subdirectories: false
 writeback_index: elastalert-omagotchi-status
 run_every:
   minutes: 1
+# 평상시 수집 지연의 허용 구간. 최초 조회·오래된 Cursor의 재시작 조회에도 적용.
 buffer_time:
   minutes: 5
+# 재시작 시 5분 이상 지난 Cursor의 재사용 제외. 오래된 오류의 일괄 알림 대신 최근 오류 우선.
 old_query_limit:
   minutes: 5
 alert_time_limit:
