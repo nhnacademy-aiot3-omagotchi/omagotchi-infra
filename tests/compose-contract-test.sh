@@ -90,9 +90,14 @@ assert_compose_contract '
       and $service.environment.SERVICE_ENVIRONMENT == "prod"
       and ($service.environment.SERVICE_NODE_NAME | nonempty);
 
-  (.services["gateway-service"] | has_version_metadata)
+  (.services["discovery-service"] | has_version_metadata)
+  and (.services["identity-service"] | has_version_metadata)
+  and (.services["learning-service"] | has_version_metadata)
+  and (.services["prediction-service"] | has_version_metadata)
+  and (.services["gateway-service"] | has_version_metadata)
   and (.services["rule-engine-a"] | has_version_metadata)
   and (.services["rule-engine-b"] | has_version_metadata)
+  and (.services.frontend | has_version_metadata)
   and .services["rule-engine-a"].environment.SERVICE_NODE_NAME
       == .services["rule-engine-a"].environment.ENGINE_ID
   and .services["rule-engine-b"].environment.SERVICE_NODE_NAME
