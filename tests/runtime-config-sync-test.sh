@@ -186,4 +186,82 @@ assert_contains '추적 파일 변경이 있어 설정 동기화를 중단합니
   "서버 Infra 변경 상태의 동기화 실패 원인이 출력되지 않았습니다."
 [[ ! -e "${candidate}" ]] || fail "Git 상태 검증 실패 이후 후보 Runtime 설정이 남았습니다."
 
+# 실제 관측 Compose 해석으로 선택적 도입·설정 교체 경계 확인. ES 접속·Container 실행 없음.
+mkdir "${fixture_dir}/observability"
+cp "${INFRA_DIR}/scripts/observability-compose.sh" "${fixture_dir}/scripts/observability-compose.sh"
+cp "${INFRA_DIR}/observability/compose.yaml" "${fixture_dir}/observability/compose.yaml"
+candidate="${secrets_dir}/.incoming-prod.env.observability"
+printf 'NEW_SECRET=new-runtime-value\n' >"${candidate}"
+grep '^ELASTICSEARCH_' "${INFRA_DIR}/.env.prod.example" >>"${candidate}"
+
+if ! SYNC_TEST_EVENTS="${events_file}" PATH="${fake_bin}:${PATH}" \
+  bash "${INFRA_DIR}/scripts/sync-runtime-config.sh" \
+    "${fixture_dir}" "${sha}" "${candidate}" >"${output_file}" 2>&1; then
+  fail '관측 설정의 최초 동기화 실패'
+fi
+assert_contains 'ELASTICSEARCH_PASSWORD=' "${secrets_dir}/prod.env" \
+  '검증된 관측 설정의 prod.env 반영 누락'
+cp "${secrets_dir}/prod.env" "${TEST_TMP_DIR}/observability.env"
+cp "${secrets_dir}/prod.env.previous" "${TEST_TMP_DIR}/previous.env"
+
+# 도입 시 일부 누락, 도입 이후 일부·전체 누락의 차단 및 기존 파일 보존.
+for scenario in partial-introduction missing-password removed-all; do
+  cp "${TEST_TMP_DIR}/observability.env" "${secrets_dir}/prod.env"
+  candidate="${secrets_dir}/.incoming-prod.env.${scenario}"
+  case "${scenario}" in
+    partial-introduction)
+      printf 'CURRENT_SECRET=stable-runtime-value\n' >"${secrets_dir}/prod.env"
+      printf 'NEW_SECRET=new-runtime-value\nELASTICSEARCH_URL=http://example.invalid:9200\n' >"${candidate}"
+      ;;
+    missing-password)
+      sed '/^ELASTICSEARCH_PASSWORD=/d' "${TEST_TMP_DIR}/observability.env" >"${candidate}"
+      ;;
+    removed-all)
+      printf 'NEW_SECRET=new-runtime-value\n' >"${candidate}"
+      ;;
+  esac
+  cp "${secrets_dir}/prod.env" "${TEST_TMP_DIR}/current.env"
+  if SYNC_TEST_EVENTS="${events_file}" PATH="${fake_bin}:${PATH}" \
+    bash "${INFRA_DIR}/scripts/sync-runtime-config.sh" \
+      "${fixture_dir}" "${sha}" "${candidate}" >"${output_file}" 2>&1; then
+    fail "불완전한 관측 설정의 동기화 허용: ${scenario}"
+  fi
+  cmp -s "${TEST_TMP_DIR}/current.env" "${secrets_dir}/prod.env" \
+    || fail '관측 설정 검증 실패 후 운영 설정 변경'
+  cmp -s "${TEST_TMP_DIR}/previous.env" "${secrets_dir}/prod.env.previous" \
+    || fail '관측 설정 검증 실패 후 복구본 변경'
+  [[ ! -e "${candidate}" ]] || fail '관측 설정 검증 실패 후 후보 파일 잔존'
+  assert_contains '후보 관측 설정의 Compose 검증에 실패했습니다' "${output_file}" \
+    '관측 설정의 실패 원인 안내 누락'
+  assert_not_contains 'new-runtime-value' "${output_file}" '관측 설정 검증 실패 시 Secret 노출'
+done
+
+# 알림 도입 이후의 Token·Chat ID 누락 차단. Bot 접속·전송 없이 실제 Compose 해석.
+cp "${TEST_TMP_DIR}/observability.env" "${secrets_dir}/prod.env"
+candidate="${secrets_dir}/.incoming-prod.env.alerts"
+cp "${TEST_TMP_DIR}/observability.env" "${candidate}"
+grep '^OPS_TELEGRAM_' "${INFRA_DIR}/.env.prod.example" >>"${candidate}"
+SYNC_TEST_EVENTS="${events_file}" PATH="${fake_bin}:${PATH}" \
+  bash "${INFRA_DIR}/scripts/sync-runtime-config.sh" \
+    "${fixture_dir}" "${sha}" "${candidate}" >"${output_file}" 2>&1
+cp "${secrets_dir}/prod.env" "${TEST_TMP_DIR}/alerts.env"
+cp "${secrets_dir}/prod.env.previous" "${TEST_TMP_DIR}/alerts-previous.env"
+
+for scenario in missing-chat removed-both empty-token; do
+  candidate="${secrets_dir}/.incoming-prod.env.${scenario}"
+  case "${scenario}" in
+    missing-chat) sed '/^OPS_TELEGRAM_CHAT_ID=/d' "${TEST_TMP_DIR}/alerts.env" >"${candidate}" ;;
+    removed-both) sed '/^OPS_TELEGRAM_/d' "${TEST_TMP_DIR}/alerts.env" >"${candidate}" ;;
+    empty-token) sed 's/^OPS_TELEGRAM_BOT_TOKEN=.*/OPS_TELEGRAM_BOT_TOKEN=/' "${TEST_TMP_DIR}/alerts.env" >"${candidate}" ;;
+  esac
+  if SYNC_TEST_EVENTS="${events_file}" PATH="${fake_bin}:${PATH}" \
+    bash "${INFRA_DIR}/scripts/sync-runtime-config.sh" \
+      "${fixture_dir}" "${sha}" "${candidate}" >"${output_file}" 2>&1; then
+    fail "불완전한 알림 설정의 동기화 허용: ${scenario}"
+  fi
+  cmp -s "${TEST_TMP_DIR}/alerts.env" "${secrets_dir}/prod.env" || fail '알림 설정 오류 후 운영본 변경'
+  cmp -s "${TEST_TMP_DIR}/alerts-previous.env" "${secrets_dir}/prod.env.previous" || fail '알림 설정 오류 후 복구본 변경'
+  assert_contains '후보 운영 알림 설정의 검증에 실패했습니다' "${output_file}" '알림 설정 오류 안내 누락'
+done
+
 echo "Runtime configuration sync tests passed"

@@ -30,6 +30,7 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
 ### Runtime 설정
 
 - 예시: `.env.prod.example`
+- 앱·관측 설정의 통합 예시, 중앙 로그 항목은 관측 Compose에서만 사용
 - 범위: DB·Redis·Broker·Token·Credential·내부 API 공유 Secret
 - 공급원: GitHub `production` Environment의 `PROD_ENV` Secret 한 개
 - 운영본: Git 추적 제외, 운영 Host의 `secrets/prod.env`에 마지막 검증 성공본 보관
@@ -66,6 +67,10 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
 - `scripts/deploy-service.sh`: 단일 서비스 이미지 배포·복구
 - `scripts/rule-engine.sh`: Rule A/B 상태·역할 검증
 - `scripts/smoke-test.sh`: 외부 Route·인증 경계 확인
+- `scripts/observability-check.sh`: 중앙 로그 연결 전 Elastic 버전·기존 계정의 허용 작업 조회
+- `observability/`: Filebeat 중앙 로그·ElastAlert2 운영 오류 알림·팀 저장소 초기화
+- `scripts/observability-compose.sh`: 앱 배포와 분리된 중앙 로그 구성 실행
+- `scripts/observability-setup.sh`: 초기화 Container의 기존 자원 확인·내장 Setup 실행
 - `tests/`: Shell 배포 계약 회귀 테스트
 
 ## 로컬 검증
@@ -122,3 +127,5 @@ shellcheck scripts/*.sh tests/*.sh
 ## 운영 절차
 
 - [운영 Runbook](docs/operations.md)
+- 중앙 로그 착수: [읽기 전용 환경 확인](docs/operations.md#중앙-로그-착수-전-확인)
+- 중앙 로그 적용: [Filebeat 운영 절차](observability/README.md)

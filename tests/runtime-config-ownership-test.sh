@@ -36,6 +36,8 @@ assert_same_keys() {
 }
 
 runtime_keys_file="${TEST_TMP_DIR}/runtime-keys"
+observability_keys_file="${TEST_TMP_DIR}/observability-keys"
+all_runtime_keys_file="${TEST_TMP_DIR}/all-runtime-keys"
 deploy_keys_file="${TEST_TMP_DIR}/deploy-keys"
 prod_example_keys_file="${TEST_TMP_DIR}/prod-example-keys"
 deploy_example_keys_file="${TEST_TMP_DIR}/deploy-example-keys"
@@ -43,18 +45,23 @@ compose_keys_file="${TEST_TMP_DIR}/compose-keys"
 owned_compose_keys_file="${TEST_TMP_DIR}/owned-compose-keys"
 
 read_array_keys runtime_keys | LC_ALL=C sort >"${runtime_keys_file}"
+grep -oE '\$\{[A-Z][A-Z0-9_]*' "${INFRA_DIR}/observability/compose.yaml" \
+  | sed 's/^${//' \
+  | LC_ALL=C sort -u >"${observability_keys_file}"
+cat "${runtime_keys_file}" "${observability_keys_file}" \
+  | LC_ALL=C sort -u >"${all_runtime_keys_file}"
 read_array_keys deploy_keys | LC_ALL=C sort >"${deploy_keys_file}"
 read_env_keys "${INFRA_DIR}/.env.prod.example" | LC_ALL=C sort >"${prod_example_keys_file}"
 read_env_keys "${INFRA_DIR}/deploy.env.example" | LC_ALL=C sort >"${deploy_example_keys_file}"
 
-# 환경파일과 compose.sh 소유권 목록의 양방향 일치.
-assert_same_keys "${prod_example_keys_file}" "${runtime_keys_file}" \
-  "prod.env 예시와 runtime_keys가 일치하지 않습니다."
+# 앱·관측 설정 예시의 통합, 앱 실행의 필수 설정 범위는 기존대로 유지.
+assert_same_keys "${prod_example_keys_file}" "${all_runtime_keys_file}" \
+  "prod.env 예시와 앱·관측 Runtime 설정 항목이 일치하지 않습니다."
 assert_same_keys "${deploy_example_keys_file}" "${deploy_keys_file}" \
   "deploy.env 예시와 deploy_keys가 일치하지 않습니다."
 
-if comm -12 "${runtime_keys_file}" "${deploy_keys_file}" | grep -q .; then
-  fail "runtime_keys와 deploy_keys에 중복 소유 Key가 있습니다."
+if comm -12 "${all_runtime_keys_file}" "${deploy_keys_file}" | grep -q .; then
+  fail "Runtime 설정과 deploy_keys에 중복 소유 Key가 있습니다."
 fi
 
 grep -oE '\$\{[A-Z][A-Z0-9_]*' "${INFRA_DIR}/compose.yaml" \
@@ -85,6 +92,13 @@ full_secret_env="${TEST_TMP_DIR}/prod.env"
 candidate_env="${TEST_TMP_DIR}/candidate.env"
 cp "${INFRA_DIR}/deploy.env.example" "${deploy_env}"
 cp "${INFRA_DIR}/.env.prod.example" "${full_secret_env}"
+
+# 통합 예시와 무관하게 관측 설정 없이 가능한 앱 Compose 실행.
+sed '/^ELASTICSEARCH_/d' "${full_secret_env}" >"${candidate_env}"
+if ! DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${candidate_env}" \
+  "${INFRA_DIR}/scripts/compose.sh" config --quiet; then
+  fail "관측 설정 누락으로 앱 Compose 실행이 차단되었습니다."
+fi
 
 # Runtime 설정과 배포 상태의 누락·책임 혼합 차단.
 grep -v '^JWT_ACCESS_TOKEN_TTL=' "${full_secret_env}" >"${candidate_env}"
