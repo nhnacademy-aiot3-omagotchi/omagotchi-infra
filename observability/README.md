@@ -7,11 +7,15 @@
 - 별도 Logstash·학교 Kubernetes 사용 없음
 - Elasticsearch 오류 Event → ElastAlert2 `2.31.0` → Telegram 운영 채팅방
 - 메트릭·Collector·Tempo의 후속 적용
-- 현재 상태: 로컬 검증용 구성·운영 미적용
+- 운영 확인 `2026-09-07`: Filebeat → Elasticsearch → Kibana의 일부 서비스 로그 수집 확인
+  - 남은 확인: Rule Engine A/B·Nginx의 수집 Label 반영, 동일 Request ID 조회, Telegram 수신
 
 ## 수집·보존 경계
 
 - Container 조건: `omagotchi` 프로젝트와 `co.elastic.logs/enabled=true` 동시 충족
+  - Filebeat 탐색 조건의 프로젝트명: `docker.container.labels.com.docker.compose.project.value`
+  - Compose의 `project`·`project.working_dir` 등 공존 시 원래 프로젝트명이 `.value`로 이동
+  - Label 추가·변경의 반영에는 Container 재생성 필요, 단순 재시작으로 반영 불가
 - Event 조건: stdout의 `nginx.access`·`*.http`·`*.error` JSON
 - 중앙 전송: `filebeat/filebeat.yml`의 허용 필드만 보존
   - 안전한 요약·HTTP 상태·서비스 정보·Request ID·Trace ID 등
@@ -153,6 +157,13 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
 
 ## 설정 변경·복구
 
+- 공개 Bind Mount 권한: 설정·Python 파일 `644`, Mount 디렉터리·Setup Script `755`
+  - 전체 Infra 배포에서 이전 `umask 077`로 생성된 관측 파일의 권한 복구
+  - Secret·JWT Key·`deploy.env` 권한 변경 없음, Container의 Capability 제한 유지
+  - `--strict.perms=false`: Filebeat 자체 소유권 검사만 생략, 운영체제의 읽기 권한은 별도 필요
+- 서버 임시 수정본의 배포 전 확인: `git diff -- observability/filebeat/filebeat.yml`
+  - 서버에서 적용한 `.project.value` 수정의 보존·원격 반영 확인 후 작업 트리 정리
+  - 다른 변경의 일괄 폐기 금지, 추적 파일 변경이 남으면 자동 배포 중단
 - Filebeat 설정 변경: `./scripts/observability-compose.sh up -d --no-deps --force-recreate filebeat`
   - Bind Mount 파일 수정만으로 자동 재기동되지 않는 점 주의
 - 수집 중지: `./scripts/observability-compose.sh stop filebeat`
