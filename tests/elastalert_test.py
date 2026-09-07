@@ -81,6 +81,24 @@ class TelegramAlertTest(unittest.TestCase):
 
 
 class AlertRecoveryTest(unittest.TestCase):
+    def test_deployment_check_only_reads_prepared_resources(self):
+        # Given: 준비된 저장소와 배포 전 확인 모드.
+        environment = {"ELASTICSEARCH_URL": "http://fixture:9200", "ES_USERNAME": "fixture",
+                       "ES_PASSWORD": "fixture-password", "OPS_TELEGRAM_BOT_TOKEN": "fixture-token",
+                       "OPS_TELEGRAM_CHAT_ID": "-100123"}
+        with patch.dict(os.environ, environment, clear=True), patch("sys.argv", ["runtime.py", "check"]), \
+                patch("runtime.elasticsearch_client") as factory, patch("runtime.verify_state_aliases") as verify, \
+                patch("runtime.setup_state_indices") as setup, patch("runtime.os.execvp") as execute:
+            client = factory.return_value
+            client.info.return_value = {"version": {"number": "8.19.3"}}
+            # When: 실제 진입점의 읽기 전용 확인 실행.
+            main()
+            # Then: 로그·알림 저장소 조회만 수행, 초기화·알림 프로세스 실행 제외.
+            verify.assert_called_once_with(client)
+            client.indices.get_data_stream.assert_called_once_with(name="logs-omagotchi-prod")
+            setup.assert_not_called()
+            execute.assert_not_called()
+
     def test_unexpected_rule_error_does_not_pause_future_runs(self):
         # Given: 실제 제품 설정과 하나의 예약된 Rule. 외부 I/O만 대역 처리.
         args = SimpleNamespace(config=CONFIG, verbose=False, debug=False, es_debug=False, es_debug_trace=None)

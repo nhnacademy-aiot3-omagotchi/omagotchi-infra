@@ -1,6 +1,6 @@
 # 메트릭·주요 Span 수집 운영
 
-> 상태: Infra·서비스 연결 구현, 운영 검증 전 · 기준일: 2026-09-07
+> 상태: 운영 기동·Grafana 메트릭 표시 확인, 자동배포 연결 보완·Trace/알림 운영 검증 필요 · 기준일: 2026-09-07
 
 ## 이번 변경과 남은 작업
 
@@ -35,7 +35,8 @@
 - 프로젝트: 기존 `omagotchi-observability`
   - `metrics`: Prometheus·Grafana
   - `tracing`: Collector·Tempo
-  - 기존 Filebeat 명령으로 새 도구의 자동 기동 없음
+  - 수동 명령의 선택 실행 단위, 전체 Infra 자동배포에서는 세 Profile과 Filebeat 사용
+  - 최초 저장소 준비·평상시 배포의 구분: [관측성 자동배포](../docs/operations.md#관측성-자동배포)
 - 앱 Network `omagotchi-net`: Prometheus Scrape·Collector OTLP 수신만 참여
 - 관측 전용 Network: Prometheus·Grafana·Collector·Tempo 연결
   - Data Source: `http://prometheus:9090`, `http://tempo:3200`
@@ -166,7 +167,7 @@
 ### 1. 배포 전 확인
 
 - Fix 운영 확인: Rule Engine A/B·Nginx의 수집 Label 및 Kibana 동일 Request ID 조회
-- Infra 변경의 검토·승격, 관측 도구의 자동 시작 없음
+- Infra 변경의 검토·승격 전 로그·알림 저장소 최초 준비, 이후 자동배포에 관측 도구 기동 포함
 - `GRAFANA_ADMIN_PASSWORD` 한 항목만 기존 `PROD_ENV`에 추가 후 설정 동기화
   - 기본 로그인 ID: `omagotchi-admin`
   - 예시 비밀번호 사용 금지, 기존 앱·Elastic·Telegram 설정 유지
@@ -189,10 +190,12 @@ ss -ltn | grep -E ":13000[[:space:]]" || true
 - `13000` 사용 중이면 기존 Process 종료 금지, 포트 충돌 해소 후 진행
 - `config`의 전체 출력·`docker inspect` Env 출력 금지, Secret 노출 방지
 
-### 2. 도구 기동
+### 2. 도구 기동·갱신
 
-- 학교 서버에서 위 사전 확인·Secret 동기화 완료 후 실행
-- 첫 명령은 Image 다운로드·Container 생성, 서비스 업무 Container의 재생성 없음
+- 평상시: Infra `main` 자동배포·수동 Workflow 재실행으로 기동·설정 반영·준비 상태 확인
+- 아래 명령은 최초 도입 또는 원인 확인 뒤의 수동 기동용, 자동배포와 동시 실행 금지
+  - 위 사전 확인·Secret 동기화 완료 후 실행, 업무 Container 재생성 없음
+  - 이미 실행 중인 도구의 설정 변경 반영은 자동배포 사용, 단순 `up`의 Bind Mount 재로딩 보장 없음
 - Grafana 시작 시 기존 Telegram 정책도 등록, 실제 서비스 증상 조건 충족 시 전송 가능
 
 ```bash
@@ -296,7 +299,8 @@ curl --disable --fail --silent --show-error --max-time 5 http://127.0.0.1:13000/
   - Tempo 재시작 후 같은 Trace 조회
   - 별도 프로젝트·새 Volume·가짜 Token 사용, Alert 평가 비활성화·외부 통신 차단
 - 서비스 검증: 실제 Boot 자동 구성·JDBC 장식·고정 Histogram·원문 제외, Prediction 실제 OTLP/HTTP 전송
-- 미검증: 학교 서버의 실제 Endpoint 연결, 실데이터 Dashboard·서비스 간 Waterfall·운영 Telegram
+- 운영 확인: 네 도구의 수동 기동·Grafana Health·HTTP/JVM/CPU 그래프 표시
+- 미검증: 전체 8개 대상 Scrape 성공·서비스 간 Waterfall·운영 Telegram·새 자동배포 경로
   - 로컬 기동·합성 데이터 검증과 운영 부하·장기 자원 사용량 검증의 구분
 
 ## 공식 근거
