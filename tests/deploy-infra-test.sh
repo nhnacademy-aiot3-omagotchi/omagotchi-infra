@@ -165,6 +165,10 @@ for public_directory in \
   mode="$(stat -c '%a' "${public_directory}" 2>/dev/null || stat -f '%Lp' "${public_directory}")"
   [[ "${mode}" == 755 ]] || fail "공개 디렉터리의 탐색 권한 복구 실패: ${public_directory}"
 done
+setup_script="${fixture_dir}/scripts/observability-setup.sh"
+mode="$(stat -c '%a' "${setup_script}" 2>/dev/null || stat -f '%Lp' "${setup_script}")"
+[[ "${mode}" == 755 ]] || fail "관측 초기화 Script의 읽기·실행 권한 복구 실패: ${setup_script}"
+
 for private_file in "${fixture_dir}/../secrets/prod.env" "${fixture_dir}/deploy.env"; do
   mode="$(stat -c '%a' "${private_file}" 2>/dev/null || stat -f '%Lp' "${private_file}")"
   [[ "${mode}" == 600 ]] || fail "비공개 파일의 권한 변경: ${private_file}"
