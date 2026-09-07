@@ -131,8 +131,8 @@ shellcheck scripts/*.sh tests/*.sh
   <40-character-infra-commit-sha>
 ```
 
-- 선행 조건: 전체 서비스 이미지 발행·Runtime 설정 완료
-- 배포 순서: Discovery → Eureka Client → Rule Engine A/B → Ingress
+- 선행 조건: 전체 서비스 이미지 발행·Runtime 설정·로그/알림 저장소 최초 준비 완료
+- 배포 순서: Discovery → Eureka Client → Rule Engine A/B → Ingress·Smoke Test → 관측성
 - Container 명령: `exec -T --interactive=false`, SSH로 전달한 배포 Script의 표준 입력과 분리
   - `-T`만 사용하면 TTY만 해제, 남은 배포 Script를 소비한 뒤 성공 종료하는 현상 가능
 - 공개 관측 파일: Container 시작 전 Bind Mount 읽기·탐색 권한 복구, Secret 권한 변경 없음
@@ -146,6 +146,26 @@ shellcheck scripts/*.sh tests/*.sh
 - Workflow 직렬화: 연속 main 반영은 Infra 자동 배포 Workflow 단위로 직렬화
 - 동시 실행: 기존 서비스·Infra 배포가 있으면 공용 Lock을 최대 600초 대기
 - 잠금 시간 초과: 실행 중인 배포를 중단하지 않고 새 배포만 실패
+
+### 관측성 자동배포
+
+- 대상: Filebeat·ElastAlert2·Prometheus·Grafana·Collector·Tempo
+- 실행 위치: `deploy-infra.sh`의 마지막 단계, 같은 배포 Lock·Revision 사용
+  - 업무 서비스와 다른 Compose 프로젝트 유지, `observability/**` 변경도 배포 Trigger에 포함
+  - 개별 서비스 배포와 `Sync Runtime Configuration`만 실행한 경우에는 관측 도구 변경 없음
+- 준비 확인: 필수 Secret·Image 다운로드·ES 상태 Alias/Data Stream·Filebeat 연결
+  - 준비 실패 시 실행 중인 관측 도구 유지, ES 최초 초기화의 자동 실행 없음
+  - 최초 준비 절차: [중앙 로그·오류 알림](../observability/README.md)
+- 반영 방식: 여섯 도구의 명시적 재생성, 기존 Named Volume 유지
+  - Bind Mount 파일 변경·환경변수·Image 반영, 단순 `up`의 설정 변경 누락 방지
+  - Infra 배포 중 짧은 수집 공백 가능, Trace·알림의 무손실 보장 아님
+- 완료 조건: 네 도구의 HTTP 준비 응답과 여섯 Runtime Container의 실행 상태
+  - 새 Container의 자동 재시작 0회, 재시작 Loop의 일시적 Running 상태도 실패 처리
+  - 전체 서비스 Scrape·Trace 저장·Telegram 수신은 별도 운영 검증
+- 실패 처리: Actions 실패, 이미 배포된 업무 서비스의 자동 Rollback 없음
+  - 관측성 로그·저장소 준비 상태 확인 후 `main`의 `Deploy Infrastructure` 재실행
+  - 배포 재실행 시 업무 서비스 단계도 포함, 관측성 보조 Script의 단독 실행은 공용 Lock 미적용
+  - 복구를 위한 `down --volumes`·초기화 무조건 재실행 금지
 
 ## OTP 발급 요청 제한
 
@@ -226,9 +246,9 @@ bash ./scripts/observability-check.sh
   - 기존 `PROD_ENV`의 관측 항목 세 개 추가, 앱의 필수 설정과 분리
   - 관측 항목 도입 이후의 일부·전체 누락 시 Runtime 설정 교체 중단
   - 초기화 Container에서 기존 팀 자원·조회 실패 확인 시 생성 중단
-  - 수집 Label 반영과 Filebeat 수동 기동의 구분
+  - 수집 Label 반영과 Filebeat 수집 확인의 구분, 평상시 기동은 Infra 자동배포에 포함
   - 운영 알림 도입 시 `OPS_TELEGRAM_BOT_TOKEN`·`OPS_TELEGRAM_CHAT_ID` 추가
-  - 알림 상태 저장소의 최초 생성·명시적 알림 기동: [Telegram 운영 절차](../observability/README.md#telegram-오류-알림)
+  - 알림 상태 저장소 최초 생성은 수동, 이후 기동·갱신은 Infra 자동배포: [Telegram 운영 절차](../observability/README.md#telegram-오류-알림)
 
 ## 운영 확인
 

@@ -64,12 +64,15 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
 - `scripts/deploy-infra.sh`: 전체 운영 구성 순차 배포
   - 서비스 재생성 후 `nginx -t`·`nginx -s reload`·외부 Smoke Test 순서 실행
   - Nginx 설정 검증·Reload 실패 시 배포 실패 처리
+- `scripts/deploy-observability.sh`: 전체 Infra 배포 안에서 관측 도구 재생성·준비 확인
+  - Filebeat·ElastAlert2·Prometheus·Grafana·Collector·Tempo, 기존 저장소 유지
+  - 개별 서비스 배포와 최초 ES 초기화는 별도 유지
 - `scripts/deploy-service.sh`: 단일 서비스 이미지 배포·복구
 - `scripts/rule-engine.sh`: Rule A/B 상태·역할 검증
 - `scripts/smoke-test.sh`: 외부 Route·인증 경계 확인
 - `scripts/observability-check.sh`: 중앙 로그 연결 전 Elastic 버전·기존 계정의 허용 작업 조회
 - `observability/`: Filebeat 중앙 로그·ElastAlert2 운영 오류 알림·팀 저장소 초기화
-- `scripts/observability-compose.sh`: 앱 배포와 분리된 중앙 로그 구성 실행
+- `scripts/observability-compose.sh`: 별도 관측 Compose 프로젝트 실행
 - `scripts/observability-setup.sh`: 초기화 Container의 기존 자원 확인·내장 Setup 실행
 - `tests/`: Shell 배포 계약 회귀 테스트
 
@@ -100,12 +103,12 @@ shellcheck scripts/*.sh tests/*.sh
 - 서비스 `main` Ruleset: Required Check만 강제하고 `Require branches to be up to date before merging` 비활성화
 - Infra Required Check: `dev`와 `main` 모두 `Validate Compose and Shell`을 적용
 - 서비스 `main`: 이미지 Build·Publish
-- Infra `main`: 구성 검증 → Runtime 설정 동기화 → 전체 배포
+- Infra `main`: 구성 검증 → Runtime 설정 동기화 → 업무 서비스 배포·Smoke Test → 관측성 배포
 - Nginx Upstream: Docker Embedded DNS를 10초 주기로 재해석해 Container IP 변경 반영
 - Runtime 설정 동기화: 자동 Infra 배포의 선행 단계, 설정만 바꿀 때는 수동 실행
 - Infra 전체 배포: `main` Push와 `workflow_dispatch` 모두 `DEPLOY_ENABLED=true`일 때만 실행
 - Kill Switch: 평상시 `DEPLOY_ENABLED=true`, 배포 중단이 필요할 때 `false`
-- 자동 배포 Trigger: 운영 구성·Script·배포 Workflow 변경, Test·PR 검증 Workflow만 바뀐 경우 제외
+- 자동 배포 Trigger: 운영 구성·`observability/**`·Script·배포 Workflow 변경, Test·PR 검증 Workflow만 바뀐 경우 제외
 - Infra 배포 직렬화: main 반영이 연속되어도 하나의 자동 배포 흐름만 실행
 - 배포 직렬화: 서비스·Infra 배포가 같은 Lock을 최대 600초 대기
 - Discovery 변경: Eureka Client보다 먼저 배포
