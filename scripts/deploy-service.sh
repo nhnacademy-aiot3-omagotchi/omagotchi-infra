@@ -106,8 +106,9 @@ reload_nginx() {
     return 0
   fi
 
-  compose "$1" exec -T nginx nginx -t
-  compose "$1" exec -T nginx nginx -s reload
+  # 배포 Script의 표준 입력과 Container 명령 입력의 분리.
+  compose "$1" exec -T --interactive=false nginx nginx -t
+  compose "$1" exec -T --interactive=false nginx nginx -s reload
 }
 
 # Discovery 교체 완료 조건.

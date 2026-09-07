@@ -90,6 +90,7 @@ chmod 644 ../secrets/jwt-public.pem
 - 후보 전송: Runner 임시 파일 생성·서버 `.incoming-prod.env.*` 전송
 - 배타 실행: 서비스·Infra 배포와 동일한 공용 Lock을 최대 600초 대기
 - Source 동기화: 서버 Infra 저장소를 Workflow의 `main` Revision으로 Fast-forward
+  - Git 파일 갱신에만 `umask 022` 적용, 후보·복구본 생성에는 `umask 077` 유지
 - 설정 검증: 현재 `deploy.env`·후보 `prod.env`의 Compose 설정 검증
 - 변경 없음: 현재 `prod.env`와 동일하면 기존 복구본을 유지하고 교체 생략
 - 직전본 보존: 기존 `prod.env`를 `prod.env.previous`로 백업
@@ -132,6 +133,9 @@ shellcheck scripts/*.sh tests/*.sh
 
 - 선행 조건: 전체 서비스 이미지 발행·Runtime 설정 완료
 - 배포 순서: Discovery → Eureka Client → Rule Engine A/B → Ingress
+- Container 명령: `exec -T --interactive=false`, SSH로 전달한 배포 Script의 표준 입력과 분리
+  - `-T`만 사용하면 TTY만 해제, 남은 배포 Script를 소비한 뒤 성공 종료하는 현상 가능
+- 공개 관측 파일: Container 시작 전 Bind Mount 읽기·탐색 권한 복구, Secret 권한 변경 없음
 - Rule 초기화: 물리 Instance별 순차 기동·역할 안정화
 - Rule 후속 배포: 현재 STANDBY부터 순차 교체
 - Rule 완료 조건: 두 Engine 등록·연속 3회 exactly-one-ACTIVE
@@ -165,7 +169,7 @@ bash ./scripts/observability-check.sh
   - 운영 알림용 Bot·채팅방 선택
   - 팀 Template·보존 정책·실제 쓰기는 버전 확정 후 연결 단계에서 확인
 - 확인값: 학교 Elasticsearch `8.19.3`·내부 주소 `http://10.116.64.14:9200`
-- 현재 상태: Filebeat·ElastAlert2 기동·초기화 구성 추가, 운영 미적용
+- 운영 확인 `2026-09-07`: 일부 서비스의 중앙 로그 검색 확인, Rule·Nginx 수집과 Telegram 수신의 추가 확인 필요
 - 적용 절차: [중앙 로그 운영](../observability/README.md)
   - 별도 `omagotchi-observability` 프로젝트, 앱 배포의 `--remove-orphans`와 분리
   - 기존 `PROD_ENV`의 관측 항목 세 개 추가, 앱의 필수 설정과 분리

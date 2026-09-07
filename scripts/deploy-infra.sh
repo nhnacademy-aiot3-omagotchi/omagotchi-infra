@@ -128,7 +128,26 @@ git merge-base --is-ancestor "${old_sha}" "${sha}" || {
 }
 
 # Workflow가 실행된 main SHA와 서버의 실제 Script·Compose 파일 일치.
-git merge --ff-only "${sha}"
+# 공개 Git 파일의 읽기 권한 보존. Secret 생성용 umask는 현재 Shell에 유지.
+(umask 022; git merge --ff-only "${sha}")
+
+# 이전 배포의 umask 077로 제한된 관측 Bind Mount 권한 복구.
+# 공개 설정·코드만 대상, secrets·deploy.env·JWT Key는 제외.
+chmod 755 \
+  observability/elasticsearch \
+  observability/elastalert2 \
+  observability/elastalert2/rules \
+  scripts/observability-setup.sh
+chmod 644 \
+  observability/filebeat/filebeat.yml \
+  observability/filebeat/setup.yml \
+  observability/elasticsearch/index-template.json \
+  observability/elasticsearch/lifecycle-policy.json \
+  observability/elastalert2/runtime.py \
+  observability/elastalert2/bootstrap.py \
+  observability/elastalert2/telegram_alert.py \
+  observability/elastalert2/config.yaml \
+  observability/elastalert2/rules/application-error.yaml
 
 [[ -x "${COMPOSE_SCRIPT}" ]] || { echo "compose.sh 실행 권한이 없습니다." >&2; exit 1; }
 [[ -x "${SMOKE_SCRIPT}" ]] || { echo "smoke-test.sh 실행 권한이 없습니다." >&2; exit 1; }
@@ -144,8 +163,9 @@ compose() {
 # 서비스 Container 재생성으로 변경된 IP를 Nginx Upstream에 다시 반영.
 # 설정 검증 또는 Reload 실패 시 외부 Smoke Test 이전에 배포 실패 처리.
 reload_nginx() {
-  compose exec -T nginx nginx -t || return 1
-  compose exec -T nginx nginx -s reload || return 1
+  # SSH로 전달 중인 배포 Script의 표준 입력 소비 방지. -T는 TTY만 비활성화.
+  compose exec -T --interactive=false nginx nginx -t || return 1
+  compose exec -T --interactive=false nginx nginx -s reload || return 1
 }
 
 # rule-engine.sh가 전달받은 env 파일로 상태를 조회하기 위한 Adapter.
