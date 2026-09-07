@@ -53,19 +53,27 @@
 | Prometheus | 512MiB | 0.5 | TSDB 7일·2GB, Query 동시 4개·15초 |
 | Grafana | 512MiB | 0.5 | Dashboard·설정 DB 전용 Volume, 추가 Plugin 자동 설치 없음 |
 | Collector | 384MiB | 0.5 | Memory Limiter 256MiB, Queue 16MiB·전송 동시 2개·재시도 최대 30초 |
-| Tempo | 4GiB | 1 | 72시간, 수신 256KiB/초·Burst 512KiB, Trace당 1MiB·동시 Query 2개 |
+| Tempo | 4GiB | 1 | 24시간, 수신 16KiB/초·Burst 512KiB, Trace당 1MiB·동시 Query 2개 |
 
 - 신규 Memory 상한 합계: 약 5.4GiB, 기존 앱·Filebeat·ElastAlert2 사용량과 별도
 - Grafana 예산 조정: macOS 첫 기동 RSS 약 320MiB 확인, 기존 256MiB 계획에서 512MiB로 증액
   - Go Memory 목표 384MiB, Linux Container의 안정 기동·부하 보장값은 아님
 - 모든 도구의 자체 Docker 로그: `10MB × 3개`, 읽기 전용 Root Filesystem
+- 평상시 보존: 제품의 오래된 데이터 자동 정리와 새 데이터 수집의 병행
+  - Prometheus의 시간·용량 보존, Tempo의 시간 보존 사용
+  - 주기적인 수집 중지·수동 삭제·재시작을 정상 운영 절차로 사용 금지
 - Volume 전체의 강제 Disk Quota 없음
   - Prometheus 2GB: WAL·Head도 사용량 계산에 포함, 용량 정리 시 보존 Block만 삭제
     - WAL·Head 자체와 Compaction 임시 공간까지 제한하는 전체 Volume 상한 아님
-  - Tempo 72시간: 시간 보존, 합계 4GiB 제한 아님
-    - 수신 256KiB/초의 72시간 연속 유입량은 약 63.3GiB, Disk 예산 4GiB의 보장값 아님
-    - 실제 저장량은 압축률·WAL·Compaction에 따라 변동, 위 수치는 Disk 사용량 예측 아님
-  - Tempo 초기 Disk 예산 4GiB 초과·Host 여유 부족 시 Trace Export 축소 또는 중지 후 원인 확인
+  - Tempo 24시간: 시간 보존, 합계 4GiB 제한 아님
+    - 수신 16KiB/초의 24시간 연속 유입량은 약 1.32GiB, Burst의 일시 초과는 별도
+    - 선택 근거: 초기 Disk 예산 4GiB에서 WAL·Compaction 여유 확보를 위한 보수적 유입 기준
+    - 압축률·WAL·Compaction에 따른 실제 저장량 미측정, 위 계산만으로 4GiB 이내 보장 불가
+  - 수신 제한의 지속 초과는 정상 운영 상태가 아님, 서비스 Sampling·Span 발생량 우선 보정
+    - 초과 시 전송 거절·재시도·최종 유실 가능, 수집기 중지·저장 파일 삭제를 뜻하지 않음
+  - Tempo 초기 Disk 예산 4GiB에 맞지 않는 증가량이면 Sampling·보존 조정
+    - Host Disk 부족 임박·자동 정리 장애 중 지속 증가의 경우에만 Trace Export 비상 중지
+    - 비상 중지 시에도 가능한 범위에서 Tempo의 자동 정리 유지, Block·WAL 수동 삭제 금지
   - 수집 지연·Queue 초과·재시도 종료·Tempo 제한의 Span 유실 가능, 업무 감사 자료로 사용 금지
 - 센서 계측의 Export 전제
   - InfluxDB 센서 데이터·Docker 처리 로그·Tempo Span의 저장 경로 구분
@@ -76,8 +84,10 @@
 - Prometheus Endpoint 제한: 응답 5MB·Sample 10,000개·Label 30개
   - 초과 시 해당 Scrape 실패, 앞부분만 저장하는 기능 아님
   - 정상 Endpoint가 제한에 걸리면 Series 증가 원인 확인 후 상한 조정
-- 첫 운영 확인: 기동 직후·1시간·24시간의 Memory·Disk·Drop 기록
+- 첫 운영 확인: 기동 직후·1시간·24시간 및 보존 정리 이후의 Memory·Disk·Drop 기록
   - 기존 학교 서버의 과거 여유 메모리만으로 현재 배포 여유 판단 금지
+  - 초기 적재 증가와 보존 주기 이후의 계속 증가 구분, 자동 정리 후 저장량 안정 여부 확인
+  - 후속 용량 경보는 급증·정리 실패·Disk 부족 같은 예외 상황만 대상, 현재 별도 자동 용량 경보 없음
 
 ## Dashboard·알림 해석
 
@@ -204,6 +214,12 @@ curl --disable --fail --silent --show-error --max-time 5 http://127.0.0.1:13000/
   - `/actuator/prometheus`의 내부 노출·Spring Security 허용, 외부 Nginx/Gateway 차단 확인
   - HTTP Histogram·Route Label·서비스명 확인, 고유 사용자·Request ID Label 금지
   - OTLP/HTTP Endpoint·제한된 비동기 Export·Timeout·Sampling 설정
+  - 운영 Export의 초기 Head Sampling 제안 `0.1`, 새 Trace 시작점의 결정과 하위 호출의 결정 공유
+    - 통제된 소량 종단 검증에서만 일시 `1.0`, 검증 후 운영값 복구
+    - 고빈도 센서에서 시작하는 Trace는 발생량 확인 후 더 낮은 Sampling 비율 검토
+    - 중간 서비스에서 독립적으로 재추출하거나 DB·메시지 Span만 삭제하는 방식 제외
+    - 모든 오류 Trace의 보존 보장 없음, 기존 오류 로그·Telegram 전송은 Trace Sampling과 별개
+    - Sampling은 후속 서비스 연결 작업, 이번 Infra 설정만으로 앱 Sampling 변경 없음
   - URL·예외·Baggage 원문 미전송 및 Collector 중지 중 업무 정상 확인
 - Prediction: 기존 OTel Provider 재사용, 중복 계측·Provider 추가 금지
   - `/metrics` 이름·단위·Label 결정 후 Scrape Allowlist·Dashboard·Alert 수정

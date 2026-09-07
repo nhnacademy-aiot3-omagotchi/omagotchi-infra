@@ -135,12 +135,18 @@ set -e
   - 오류 대표 Event 검색·진단 Event 및 민감 필드의 부재 확인
 - 관찰: `libbeat.output.events.dropped`·Queue 적체·Container Memory·Data Stream 용량
 
-## 초기 용량 확인·수집 중지 기준
+## 자동 보존·초기 용량 보정
 
+- 평상시: ILM의 오래된 Index 자동 삭제와 새 로그 수집의 병행
+  - 주기적인 수동 삭제·수집 중지·재시작을 정상 운영 절차로 사용 금지
+  - 설정된 보존 주기 이후에도 저장량이 계속 증가하면 유입량·ILM 적용·삭제 오류 확인
 - 팀 관측 Index의 초기 운영 예산: Replica 포함 색인 저장량 합계 `8GiB`
   - 학교 Cluster의 강제 Quota 아님, Translog·임시 파일 등 전체 Disk 사용량과 구분
-  - 시작 1시간 후·24시간 후 확인, 이후 발생량에 따른 점검 주기 조정
-  - 학교 Disk 부족·ILM 오류·예산 도달 시 Filebeat·ElastAlert2 중지 후 원인 확인
+  - 시작 1시간 후·24시간 후 및 첫 Rollover 이후 3일 삭제 구간의 저장량 확인
+  - 초기 적재 중 증가와 자동 삭제 이후의 증가 추세 구분, 하루 측정만으로 장기 안정 판정 금지
+  - 예산에 맞지 않는 증가량이면 허용 Event·전송량·보존 기간 조정, 반복적인 수동 삭제로 대응 금지
+  - 기존 팀 ILM 변경은 현재 적용값·조사 기간 확인 후 별도 반영, Setup 재실행으로 덮어쓰기 금지
+  - 학교 Disk 부족 임박·삭제 장애 중 지속 증가의 경우에만 Filebeat·ElastAlert2 비상 중지
   - 원인 확인 전 보존 연장·수집량 증대·학교 전역 설정 변경 금지
 - Kibana Dev Tools의 읽기 전용 조회
   - 팀 로그와 알림 상태만 조회, 다른 팀 Index 제외
@@ -152,9 +158,12 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_stats/store?filter_path=_
 GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=true
 ```
 
-- 중지 명령: `./scripts/observability-compose.sh stop filebeat elastalert`
+- 비상 중지 명령: `./scripts/observability-compose.sh stop filebeat elastalert`
   - 수집·알림만 중지, 기존 Index 자동 삭제·업무 서비스 중지 없음
-  - 자동 용량 감시·삭제 Script 미도입, 현재 구성만으로 전체 용량 상한 보장 불가
+  - 제품의 ILM 자동 삭제는 유지, 원인 해소 후 수집 재개
+  - 별도 용량 감시·강제 삭제·자동 중지 Script 미도입, 현재 구성만으로 전체 용량 상한 보장 불가
+  - 후속 용량 경보: 예상 밖의 급증·삭제 실패·Disk 부족 대상, 정상 자동 삭제의 알림·같은 문제의 반복 발송 제외
+    - 현재 Telegram 오류 알림과 별도인 후속 작업, 경보 수신에 따른 수동 삭제를 정상 절차로 사용 금지
 
 ## 설정 변경·복구
 

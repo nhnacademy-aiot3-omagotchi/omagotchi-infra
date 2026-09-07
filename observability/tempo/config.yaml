@@ -25,9 +25,11 @@ querier:
 overrides:
   defaults:
     compaction:
-      block_retention: 72h
+      # 오래된 Block의 자동 정리. 전체 Volume의 강제 용량 상한은 아님.
+      block_retention: 24h
     ingestion:
-      rate_limit_bytes: 262144
+      # 24시간 약 1.32GiB 유입량의 초기 기준. 정상 수집량 조절은 서비스 Sampling 우선.
+      rate_limit_bytes: 16384
       burst_size_bytes: 524288
       max_traces_per_user: 5000
     global:
