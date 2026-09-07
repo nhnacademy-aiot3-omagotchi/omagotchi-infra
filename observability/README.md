@@ -6,7 +6,8 @@
 - 업무 서비스·배포와 분리된 `omagotchi-observability` Compose 프로젝트
 - 별도 Logstash·학교 Kubernetes 사용 없음
 - Elasticsearch 오류 Event → ElastAlert2 `2.31.0` → Telegram 운영 채팅방
-- 메트릭·Collector·Tempo의 후속 적용
+- 메트릭·Collector·Tempo의 선택적 구성: [메트릭·HTTP 트레이스 운영](metrics-tracing.md)
+  - Infra 구현과 서비스 계측 연결·운영 검증의 구분
 - 운영 확인 `2026-09-07`: Filebeat → Elasticsearch → Kibana의 일부 서비스 로그 수집 확인
   - 남은 확인: Rule Engine A/B·Nginx의 수집 Label 반영, 동일 Request ID 조회, Telegram 수신
 
