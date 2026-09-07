@@ -10,6 +10,7 @@ umask 077
 # 3. Discovery 선행 배포와 Eureka Client 재등록 확인
 # 4. Rule Engine A/B 순차 배포와 역할 안정화 확인
 # 5. Nginx·Cloudflare 기동, Nginx 설정 검증·Reload, 외부 Smoke Test
+# 6. 관측성 도구 재생성·연결·준비 상태 확인
 #
 # 실패 범위:
 # - 실패 즉시 중단과 현재 단계 출력
@@ -41,6 +42,7 @@ SECRET_ENV="${ROOT_DIR}/secrets/prod.env"
 COMPOSE_SCRIPT="${INFRA_DIR}/scripts/compose.sh"
 SMOKE_SCRIPT="${INFRA_DIR}/scripts/smoke-test.sh"
 RULE_ENGINE_SCRIPT="${INFRA_DIR}/scripts/rule-engine.sh"
+OBSERVABILITY_DEPLOY_SCRIPT="${INFRA_DIR}/scripts/deploy-observability.sh"
 LOCK_FILE="${ROOT_DIR}/.omagotchi-deploy.lock"
 DEPLOY_LOCK_WAIT_SECONDS=600
 
@@ -152,6 +154,7 @@ chmod 644 \
 [[ -x "${COMPOSE_SCRIPT}" ]] || { echo "compose.sh 실행 권한이 없습니다." >&2; exit 1; }
 [[ -x "${SMOKE_SCRIPT}" ]] || { echo "smoke-test.sh 실행 권한이 없습니다." >&2; exit 1; }
 [[ -r "${RULE_ENGINE_SCRIPT}" ]] || { echo "rule-engine.sh를 읽을 수 없습니다." >&2; exit 1; }
+[[ -r "${OBSERVABILITY_DEPLOY_SCRIPT}" ]] || { echo "deploy-observability.sh를 읽을 수 없습니다." >&2; exit 1; }
 
 # 실제 deploy.env를 사용하는 전체 Infra Compose Adapter.
 compose() {
@@ -230,5 +233,16 @@ reload_nginx || {
 }
 
 "${SMOKE_SCRIPT}" "${base_url}"
+
+# 동일한 배포 Lock·Revision 안에서 별도 Compose 프로젝트 갱신.
+# 관측성 실패 시 이미 배포된 업무 서비스 유지, 전체 배포의 성공 처리 차단.
+echo "::group::관측성 배포"
+if SECRET_ENV_FILE="${SECRET_ENV}" bash "${OBSERVABILITY_DEPLOY_SCRIPT}" </dev/null; then
+  echo "::endgroup::"
+else
+  echo "::endgroup::"
+  echo "관측성 배포 실패. 업무 서비스는 유지되며, 관측성 상태 확인 후 Infra 배포 재실행이 필요합니다." >&2
+  exit 1
+fi
 
 echo "인프라 배포 완료: ${old_sha} -> ${sha}"
