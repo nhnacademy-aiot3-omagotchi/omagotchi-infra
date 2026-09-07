@@ -9,6 +9,7 @@ on:
       - .env.prod.example
       - deploy.env.example
       - nginx/**
+      - observability/**
       - scripts/**
       - .github/workflows/deploy.yml
   workflow_dispatch:

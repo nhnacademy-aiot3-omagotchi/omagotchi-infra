@@ -99,6 +99,12 @@ cat >"${fixture_dir}/scripts/smoke-test.sh" <<'EOF'
 printf 'smoke:%s\n' "$*" >>"${MODE_TEST_EVENTS}"
 EOF
 
+cat >"${fixture_dir}/scripts/deploy-observability.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'observability:%s\n' "${SECRET_ENV_FILE}" >>"${MODE_TEST_EVENTS}"
+[[ "${MODE_TEST_FAIL_OBSERVABILITY:-false}" != true ]]
+EOF
+
 cat >"${fixture_dir}/scripts/rule-engine.sh" <<'EOF'
 # 실제 Eureka 확인 함수 사용, Rule Container 변경만 대역 처리.
 # shellcheck disable=SC1090
@@ -147,6 +153,9 @@ assert_before "nginx nginx -t" \
 assert_before "nginx nginx -s reload" \
   "smoke:https://example.invalid" "${events_file}" \
   "Nginx reload가 Smoke Test보다 먼저 실행되지 않았습니다."
+assert_before "smoke:https://example.invalid" \
+  "observability:${fixture_dir%/infra}/secrets/prod.env" "${events_file}" \
+  "업무 서비스 검증 이후의 관측성 배포 또는 Runtime 설정 전달 누락."
 assert_contains "인프라 배포 완료" "${output_file}" \
   "전체 배포 완료 상태가 명시되지 않았습니다."
 
@@ -185,5 +194,19 @@ if MODE_TEST_EVENTS="${events_file}" \
 fi
 assert_not_contains "smoke:" "${events_file}" \
   "Nginx reload 실패 이후 Smoke Test가 실행되었습니다."
+
+# 관측성 실패 이후 전체 배포의 성공 처리·업무 재배포 방지.
+: >"${events_file}"
+if MODE_TEST_EVENTS="${events_file}" \
+  MODE_TEST_RULE_ENGINE="${INFRA_DIR}/scripts/rule-engine.sh" \
+  MODE_TEST_FAIL_OBSERVABILITY=true PATH="${fake_bin}:${PATH}" \
+  bash "${INFRA_DIR}/scripts/deploy-infra.sh" "${fixture_dir}" "${sha}" \
+  >"${output_file}" 2>&1; then
+  fail "관측성 실패가 전체 배포 실패로 전파되지 않았습니다."
+fi
+assert_not_contains "인프라 배포 완료" "${output_file}" \
+  "관측성 실패 이후 전체 배포의 성공 처리."
+[[ "$(tail -n 1 "${events_file}")" == observability:* ]] ||
+  fail "관측성 실패 이후 업무 서비스 변경."
 
 echo "Deploy infra tests passed"

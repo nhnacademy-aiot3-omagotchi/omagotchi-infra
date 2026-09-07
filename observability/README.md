@@ -3,10 +3,10 @@
 ## 현재 범위
 
 - Docker stdout → Filebeat `8.19.3` → 학교 Elasticsearch `8.19.3` → Kibana
-- 업무 서비스·배포와 분리된 `omagotchi-observability` Compose 프로젝트
+- 업무 서비스와 분리된 `omagotchi-observability` Compose 프로젝트, Infra 자동배포에 기동·갱신 포함
 - 별도 Logstash·학교 Kubernetes 사용 없음
 - Elasticsearch 오류 Event → ElastAlert2 `2.31.0` → Telegram 운영 채팅방
-- 메트릭·Collector·Tempo의 선택적 구성: [메트릭·주요 Span 수집 운영](metrics-tracing.md)
+- 메트릭·Collector·Tempo 구성: [메트릭·주요 Span 수집 운영](metrics-tracing.md)
   - Infra 구현과 서비스 계측 연결·운영 검증의 구분
 - 운영 확인 `2026-09-07`: Filebeat → Elasticsearch → Kibana의 일부 서비스 로그 수집 확인
   - 남은 확인: Rule Engine A/B·Nginx의 수집 Label 반영, 동일 Request ID 조회, Telegram 수신
@@ -103,6 +103,8 @@ set -e
 
 ## 최초 초기화·수집 시작
 
+- 아래 명령은 최초 준비용 수동 절차, 평상시 기동·설정 반영은 [Infra 자동배포](../docs/operations.md#관측성-자동배포) 사용
+- 자동배포의 초기화 실행 없음, 로그 Data Stream·알림 상태 Alias 누락 시 실패 처리
 - 실행 조건: 위 조회 결과의 검토 완료·팀 자원 부재·보존 정책 동의
 - 자원 생성은 Filebeat 내장 `setup`에 위임, 사전 확인만 Shell Script에서 수행
 - `scripts/observability-setup.sh`: 내장 `setup` 실행 전 연결·인증 및 기존 팀 자원 확인
@@ -200,9 +202,10 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
   - `OPS_TELEGRAM_BOT_TOKEN`: BotFather에서 받은 Token
   - `OPS_TELEGRAM_CHAT_ID`: 운영 그룹의 음수 Chat ID
   - 기존 앱·Elasticsearch 항목 유지, 실제 Token의 Git·채팅 기록 금지
-  - 알림 미도입 시 두 항목 생략 가능, 도입 이후 누락·빈 값은 동기화 단계에서 차단
+  - 전체 Infra 자동배포 전에 두 항목 설정 필수, 도입 이후 누락·빈 값은 동기화 단계에서 차단
 - 제품 기본 이미지의 자동 Index 초기화 미사용
   - `runtime.py`: 접속 환경변수 변환·실행 모드 분리
+    - `check`: 배포 전 연결·상태 Alias·로그 Data Stream의 읽기 전용 확인, 초기화·알림 전송 없음
   - `bootstrap.py`: 기존 팀 자원 확인·제품 Mapping과 ILM 적용
   - `telegram_alert.py`: 허용 필드의 평문 전송·Timeout·인증 정보 보호
   - 조회·Cursor·재알림·재시도: ElastAlert2 기본 기능 사용
@@ -243,7 +246,7 @@ set -e
   - 인증 실패 `401`·작업 권한 부족 `403`·자원 부재 `404`의 구분
   - 외부 예외의 응답·URL·인증값 출력 제외
   - 생성 도중 실패 시 부분 생성 상태 확인, `elastalert-setup`의 무조건 재실행 금지
-- Filebeat만 실행하는 기존 명령의 알림 Container 자동 기동 없음
+- Filebeat만 지정한 수동 명령의 알림 Container 자동 기동 없음, 전체 Infra 자동배포는 두 도구 모두 포함
 
 ### 알림·자원 경계
 

@@ -36,11 +36,11 @@ def main():
     try:
         connection = configure_connection()
         mode = sys.argv[1] if len(sys.argv) == 2 else ""
-        if mode not in ("run", "setup"):
-            raise AlertPreparationError("실행 모드 run 또는 setup 지정 필요")
+        if mode not in ("run", "setup", "check"):
+            raise AlertPreparationError("실행 모드 run·setup·check 중 하나 지정 필요")
         # 상태 초기화에는 Telegram 인증 정보 불필요. 상시 실행 전에는 필수.
-        if mode == "run" and (not os.environ.get("OPS_TELEGRAM_BOT_TOKEN")
-                              or not os.environ.get("OPS_TELEGRAM_CHAT_ID")):
+        if mode in ("run", "check") and (not os.environ.get("OPS_TELEGRAM_BOT_TOKEN")
+                                        or not os.environ.get("OPS_TELEGRAM_CHAT_ID")):
             raise AlertPreparationError("운영 알림 Bot Token·Chat ID 설정 필요")
         stage = "Elasticsearch 연결·버전 확인"
         client = elasticsearch_client(connection)
@@ -53,6 +53,12 @@ def main():
             return
         stage = "상태 Alias의 쓰기 대상 확인"
         verify_state_aliases(client)
+        if mode == "check":
+            # 배포 전 읽기 전용 확인. 초기화·알림 프로세스 실행·Telegram 전송 제외.
+            stage = "로그 Data Stream 확인"
+            client.indices.get_data_stream(name="logs-omagotchi-prod")
+            print("관측 저장소 연결·상태 Alias·로그 Data Stream 확인 완료.")
+            return
     except AlertPreparationError as error:
         print(f"알림 실행 준비 실패: {error}", file=sys.stderr)
         sys.exit(1)
