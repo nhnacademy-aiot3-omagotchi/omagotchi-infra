@@ -121,6 +121,7 @@ fi
 
 : >"${events_file}"
 # SSH와 같은 파이프 입력으로 전달, 마지막 배포 단계까지 실행 확인.
+# shellcheck disable=SC2002 # SSH 파이프 입력 재현을 위한 cat 유지.
 cat "${INFRA_DIR}/scripts/deploy-infra.sh" | \
   MODE_TEST_EVENTS="${events_file}" MODE_TEST_RULE_ENGINE="${INFRA_DIR}/scripts/rule-engine.sh" \
   PATH="${fake_bin}:${PATH}" bash -s -- "${fixture_dir}" "${sha}" \
