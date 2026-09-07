@@ -98,7 +98,14 @@ assert_not_contains '      - .github/workflows/sync-runtime-config.yml' "${DEPLO
   "수동 Runtime 설정 Workflow 변경만으로 전체 Infra 자동 배포가 실행됩니다."
 assert_not_contains '      - tests/**' "${DEPLOY_WORKFLOW}" \
   "Test 변경만으로 전체 Infra 자동 배포가 실행됩니다."
-assert_contains '      - observability/**' "${DEPLOY_WORKFLOW}" \
+# 주석·다른 Event의 같은 문자열을 제외한 Push 경로 목록 확인.
+assert_contains '      - observability/**' \
+  <(awk '
+    /^[^[:space:]#]/ { in_on = ($0 == "on:") }
+    /^  [^[:space:]#]/ { in_push = in_on && ($0 == "  push:") }
+    /^    [^[:space:]#]/ { in_paths = in_push && ($0 == "    paths:") }
+    in_on && in_push && in_paths && /^      - / { print }
+  ' "${DEPLOY_WORKFLOW}") \
   "관측 설정 변경이 자동배포 Trigger에서 누락되었습니다."
 assert_not_contains '      - .github/workflows/ci.yml' "${DEPLOY_WORKFLOW}" \
   "PR 검증 Workflow 변경만으로 전체 Infra 자동 배포가 실행됩니다."
