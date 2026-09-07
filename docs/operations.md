@@ -147,6 +147,57 @@ shellcheck scripts/*.sh tests/*.sh
 - 동시 실행: 기존 서비스·Infra 배포가 있으면 공용 Lock을 최대 600초 대기
 - 잠금 시간 초과: 실행 중인 배포를 중단하지 않고 새 배포만 실패
 
+## OTP 발급 요청 제한
+
+- 대상: 회원가입·비밀번호 재설정의 OTP 발급 POST 두 경로
+  - `/bff/v2/auth/signup/email-otp`
+  - `/bff/v2/auth/password-reset/email-otp`
+  - Gateway 미경유 BFF의 Nginx 인입 제한, 두 용도의 공통 예산 사용
+- 운영 전제: Resend 무료 티어의 하루 100건·월 3,000건
+  - 초기 제한: 전체 분당 6건·순간 30건
+  - 허용 요청도 초당 2건 속도로 분산, 최대 약 15초 대기 가능
+  - 초당 2건은 보수적인 전송 기준, 실제 Resend 계정의 API Rate Limit 보장값 아님
+  - Nginx 요청 수와 실제 메일 발송 수의 구분: 입력 오류·CSRF 거절도 제한 집계에 포함
+  - 하루·월 사용량의 정확한 계수 기능 없음, 무료 한도는 Resend가 별도 적용
+  - 지속 공격·다른 발송 경로까지 일일 예산 소진 방지 보장 없음
+  - 일일 잔여량 예약·CAPTCHA 도입은 필요 시 별도 Identity·Frontend 작업
+- 단순화 범위: IP·Host와 무관한 공통 제한 Key 사용
+  - IP별 제한·사용자별 발송량 보장 없음, 한 사용자의 예산 소진 시 다른 사용자도 일시 차단
+  - 기존 Network·IP Header 전달 방식 유지, OTP를 위한 전용 Network·고정 IP 추가 없음
+  - Header의 사용자 IP 진위 검증 기능 아님, OTP 제한 판단에서 해당 Header 미사용
+- 차단 응답: `429`·`Retry-After: 60`·`COMMON_TOO_MANY_REQUESTS`
+  - 응답 Header·본문·Nginx 접근 Event의 동일 Request ID
+  - 차단 요청의 Frontend 전달 없음, 일반 조회·다른 BFF·API 영향 없음
+  - `Retry-After`는 재시도 권고 시간, 다른 사용자의 합산 요청에 따른 재차 차단 가능
+
+### 연수생·관리자 사용 시 운영 기준
+
+- 현재 목적: 소규모 서비스의 단순 남용 억제, 무료 발송량의 완전한 보호 기능 아님
+- 학교 공인 IP 공유 여부와 무관하게 연수생·관리자 모두 같은 요청 예산 사용
+  - 평상시 제한 유지, 429 발생 시 잠시 후 재시도 안내
+  - 단체 가입 전 예상 인원·재발송 여유·Resend 잔여량 확인, 인원을 나눈 순차 가입 안내
+- 정상 단체 가입의 반복 차단 시 해당 기간의 합산 제한 조정 후 기존 값 복원
+  - 짧은 동시 요청은 `burst`, 지속 요청은 `rate` 조정 검토
+  - Resend API 속도·일일/월간 발송 한도와 별개인 Nginx 제한, 제한 완화만으로 발송 한도 증가 불가
+- 반복 남용이나 정상 이용량의 무료 한도 초과 시 별도 개선 검토
+  - 남용: 계정·수신 주소별 제한 또는 CAPTCHA 검토
+  - 정상 이용량 증가: 발송 요금제·운영 예산 검토
+  - 현재 범위에서 추가 저장소·일일 사용량 집계·CAPTCHA 구현 없음
+
+### 적용 확인
+
+- 자동 검증: `bash tests/nginx-observability-test.sh`
+  - 실제 Nginx·모의 Frontend로 정상 요청·두 용도의 합산 차단·IP/Host Header 변경과 무관한 제한 확인
+  - Resend·학교 자원 호출 없음
+- 운영 확인: 이용이 적은 시간의 통제된 검증
+  - 본인 주소의 정상 발급 1건 확인, 다수 실제 메일 발송으로 부하 검증 금지
+  - `{}` 본문·Cookie 없는 OTP POST로 입력/CSRF 거절과 최종 429 확인 가능
+  - 잘못된 요청도 공통 예산 소비, 전체 사용자의 일시 제한 가능성 사전 안내
+  - 응답의 `Retry-After`·Request ID와 Kibana의 동일 Nginx Event 확인
+  - 대기 후 정상 발급·비밀번호 재설정 화면 재확인
+  - Frontend PR #127 리뷰의 최종 해결 판단은 운영 경로 확인 뒤 진행
+- 근거: [Resend 요금제](https://resend.com/pricing/), [계정 한도](https://resend.com/docs/knowledge-base/account-quotas-and-limits), [Nginx 요청 제한](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html)
+
 ## 중앙 로그 착수 전 확인
 
 ```bash

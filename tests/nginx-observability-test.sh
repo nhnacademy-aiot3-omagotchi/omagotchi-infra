@@ -152,6 +152,38 @@ for path in /actuator /actuator/prometheus /actuator/health; do
     "http://127.0.0.1:${PROXY_PORT}${path}")" == 404 ]] || fail "내부 Actuator 외부 노출: ${path}"
 done
 
+# IP·Host Header와 무관한 두 OTP 용도의 공통 예산 확인.
+# 테스트 중 예산 회복을 고려한 최대 40회 요청, 첫 429에서 중단.
+for attempt in {1..40}; do
+  OTP_KIND=signup
+  if ((attempt % 2 == 0)); then OTP_KIND=password-reset; fi
+  curl --silent --show-error --max-time 20 \
+    --dump-header "${TEMP_DIR}/otp-headers" --output "${TEMP_DIR}/otp-body" \
+    --header "CF-Connecting-IP: 198.51.100.${attempt}" --header "Host: otp-${attempt}.test" --request POST \
+    "http://127.0.0.1:${PROXY_PORT}/bff/v2/auth/${OTP_KIND}/email-otp"
+  if ((attempt <= 2)); then
+    [[ "$(status_code "${TEMP_DIR}/otp-headers")" == 204 ]] || fail "정상 OTP 요청 차단"
+  fi
+  result="$(status_code "${TEMP_DIR}/otp-headers")"
+  if [[ "${result}" == 429 ]]; then break; fi
+  [[ "${result}" == 204 ]] || fail "합산 제한 검증 중 예상 밖 응답: ${result}"
+done
+[[ "$(status_code "${TEMP_DIR}/otp-headers")" == 429 ]] || fail "OTP 합산 제한 미적용"
+OTP_REQUEST_ID="$(response_request_id 'OTP 제한' "${TEMP_DIR}/otp-headers")"
+[[ "$(header_value Retry-After "${TEMP_DIR}/otp-headers")" == 60 ]] || fail "OTP Retry-After 누락"
+[[ "$(header_value X-Content-Type-Options "${TEMP_DIR}/otp-headers")" == nosniff ]] || fail "OTP 오류의 보안 Header 누락"
+[[ -z "$(header_value X-Received-Request-ID "${TEMP_DIR}/otp-headers")" ]] || fail "차단된 OTP의 Upstream 전달"
+jq -e --arg request_id "${OTP_REQUEST_ID}" '
+  .code == "COMMON_TOO_MANY_REQUESTS" and .requestId == $request_id
+' "${TEMP_DIR}/otp-body" >/dev/null || fail "OTP 공통 오류 응답 불일치"
+docker logs "${UPSTREAM_NAME}" 2>&1 | grep -Fq "${OTP_REQUEST_ID}" && fail "차단된 OTP의 Upstream 도달"
+
+# OTP 예산 소진 후에도 조회·다른 BFF·API 요청 허용
+for path in /register /bff/v2/auth/signup/email-otp /api/v1/rules/ping; do
+  [[ "$(curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' \
+    "http://127.0.0.1:${PROXY_PORT}${path}")" == 204 ]] || fail "OTP 외 요청의 오차단: ${path}"
+done
+
 INTERNAL_HEADERS="${TEMP_DIR}/internal-headers"
 INTERNAL_BODY="${TEMP_DIR}/internal-body"
 curl --silent --show-error \
