@@ -1,0 +1,132 @@
+{
+  "resourceSpans": [{
+    "resource": {"attributes": [
+      {"key": "service.name", "value": {"stringValue": "gateway-service"}},
+      {"key": "deployment.environment.name", "value": {"stringValue": "test"}},
+      {"key": "private.token", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
+    ]},
+    "scopeSpans": [{
+      "scope": {"name": "PRIVATE_FIXTURE_SECRET_SCOPE", "version": "PRIVATE_FIXTURE_SECRET_VERSION", "attributes": [
+        {"key": "private.token", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
+      ]},
+      "spans": [{
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "2222222222222222",
+        "parentSpanId": "3333333333333333",
+        "traceState": "private=PRIVATE_FIXTURE_SECRET",
+        "name": "GET /raw/PRIVATE_FIXTURE_SECRET?serviceKey=PRIVATE_FIXTURE_SECRET",
+        "kind": 2,
+        "startTimeUnixNano": "1788739200000000000",
+        "endTimeUnixNano": "1788739200010000000",
+        "status": {"code": 2, "message": "PRIVATE_FIXTURE_SECRET"},
+        "attributes": [
+          {"key": "http.request.method", "value": {"stringValue": "GET"}},
+          {"key": "http.response.status_code", "value": {"intValue": "500"}},
+          {"key": "http.route", "value": {"stringValue": "/api/v1/rules/{ruleId}"}},
+          {"key": "url.full", "value": {"stringValue": "https://example.invalid/?serviceKey=PRIVATE_FIXTURE_SECRET"}},
+          {"key": "http.request.header.authorization", "value": {"stringValue": "Bearer PRIVATE_FIXTURE_SECRET"}},
+          {"key": "custom.payload", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
+        ],
+        "events": [{"timeUnixNano": "1788739200001000000", "name": "PRIVATE_FIXTURE_SECRET", "attributes": [
+          {"key": "exception.message", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
+        ]}],
+        "links": [{"traceId": "44444444444444444444444444444444", "spanId": "5555555555555555", "traceState": "private=PRIVATE_FIXTURE_SECRET", "attributes": [
+          {"key": "private.token", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
+        ]}]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "3333333333333333",
+        "name": "PRIVATE_FIXTURE_SECRET_INTERNAL",
+        "kind": 1,
+        "startTimeUnixNano": "1788739199990000000",
+        "endTimeUnixNano": "1788739200020000000"
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "6666666666666666",
+        "parentSpanId": "2222222222222222",
+        "name": "SELECT PRIVATE_FIXTURE_SECRET",
+        "kind": 3,
+        "startTimeUnixNano": "1788739200001000000",
+        "endTimeUnixNano": "1788739200002000000",
+        "attributes": [
+          {"key": "db.system.name", "value": {"stringValue": "postgresql"}},
+          {"key": "db.operation.name", "value": {"stringValue": "SELECT"}},
+          {"key": "db.query.summary", "value": {"stringValue": "SELECT study_records"}},
+          {"key": "db.query.text", "value": {"stringValue": "SELECT PRIVATE_FIXTURE_SECRET"}},
+          {"key": "jdbc.query[0]", "value": {"stringValue": "SELECT PRIVATE_FIXTURE_SECRET"}},
+          {"key": "jdbc.params[0]", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
+        ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "7777777777777777",
+        "parentSpanId": "2222222222222222",
+        "name": "GET PRIVATE_FIXTURE_SECRET",
+        "kind": 3,
+        "startTimeUnixNano": "1788739200002000000",
+        "endTimeUnixNano": "1788739200003000000",
+        "attributes": [
+          {"key": "db.system", "value": {"stringValue": "redis"}},
+          {"key": "db.operation", "value": {"stringValue": "GET"}},
+          {"key": "db.statement", "value": {"stringValue": "GET PRIVATE_FIXTURE_SECRET"}}
+        ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "8888888888888888",
+        "parentSpanId": "2222222222222222",
+        "name": "PRIVATE_FIXTURE_SECRET_PROMPT",
+        "kind": 3,
+        "startTimeUnixNano": "1788739200003000000",
+        "endTimeUnixNano": "1788739200008000000",
+        "attributes": [
+          {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+          {"key": "gen_ai.request.model", "value": {"stringValue": "example-model"}},
+          {"key": "gen_ai.usage.input_tokens", "value": {"intValue": "20"}},
+          {"key": "gen_ai.prompt", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}},
+          {"key": "gen_ai.completion", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
+        ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "9999999999999999",
+        "parentSpanId": "8888888888888888",
+        "name": "PRIVATE_FIXTURE_SECRET_TOOL",
+        "kind": 1,
+        "startTimeUnixNano": "1788739200004000000",
+        "endTimeUnixNano": "1788739200005000000",
+        "attributes": [
+          {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+          {"key": "spring.ai.tool.definition.name", "value": {"stringValue": "lookupStudySummary"}},
+          {"key": "spring.ai.tool.call.arguments", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}},
+          {"key": "spring.ai.tool.call.result", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
+        ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "aaaaaaaaaaaaaaaa",
+        "parentSpanId": "3333333333333333",
+        "name": "PRIVATE_FIXTURE_SECRET_MESSAGE",
+        "kind": 5,
+        "startTimeUnixNano": "1788739200000000000",
+        "endTimeUnixNano": "1788739200010000000",
+        "attributes": [
+          {"key": "messaging.system", "value": {"stringValue": "rabbitmq"}},
+          {"key": "messaging.operation.type", "value": {"stringValue": "process"}},
+          {"key": "messaging.destination.name", "value": {"stringValue": "omagotchi.sensor.raw"}},
+          {"key": "messaging.message.body", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
+        ],
+        "links": [{"traceId": "44444444444444444444444444444444", "spanId": "5555555555555555", "traceState": "private=PRIVATE_FIXTURE_SECRET", "attributes": [
+          {"key": "private.token", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
+        ]}]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "bbbbbbbbbbbbbbbb",
+        "parentSpanId": "2222222222222222",
+        "name": "prediction.inference",
+        "kind": 1,
+        "startTimeUnixNano": "1788739200008000000",
+        "endTimeUnixNano": "1788739200009000000",
+        "attributes": [
+          {"key": "prediction.features", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
+        ]
+      }]
+    }]
+  }]
+}

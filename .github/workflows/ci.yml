@@ -17,7 +17,8 @@ jobs:
   validate:
     name: Validate Compose and Shell
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 관측 도구의 고정 버전 이미지 다운로드·제품 검증 시간 포함.
+    timeout-minutes: 10
 
     steps:
       - name: Checkout

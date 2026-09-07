@@ -1,0 +1,20 @@
+# 제품 Pipeline은 그대로 사용, 테스트 출력과 Listener만 임시 경로로 교체.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: ${env:TEST_OTLP_ENDPOINT}
+exporters:
+  file/test:
+    path: ${env:TEST_OUTPUT_PATH}
+extensions:
+  health_check:
+    endpoint: ${env:TEST_HEALTH_ENDPOINT}
+service:
+  telemetry:
+    metrics:
+      level: none
+      readers: []
+  pipelines:
+    traces:
+      exporters: [file/test]

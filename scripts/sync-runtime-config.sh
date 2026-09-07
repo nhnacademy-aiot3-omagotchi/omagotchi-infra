@@ -223,6 +223,19 @@ if grep -Eq '^[[:space:]]*(export[[:space:]]+)?OPS_TELEGRAM_(BOT_TOKEN|CHAT_ID)[
     exit 1
   fi
 fi
+# Grafana 도입 이후 관리자 비밀번호·운영 알림 설정의 누락 차단.
+if grep -Eq '^[[:space:]]*(export[[:space:]]+)?GRAFANA_ADMIN_PASSWORD[[:space:]]*=' \
+  "${SECRET_ENV}" "${candidate}"; then
+  if ! SECRET_ENV_FILE="${candidate}" \
+    "${INFRA_DIR}/scripts/observability-compose.sh" --profile metrics config --format json \
+    2>"${compose_validation_output}" \
+    | jq -e '.services.grafana.environment
+        | [.GF_SECURITY_ADMIN_PASSWORD, .OPS_TELEGRAM_BOT_TOKEN, .OPS_TELEGRAM_CHAT_ID]
+        | all(. != null and length > 0)' >/dev/null 2>>"${compose_validation_output}"; then
+    echo "후보 Grafana 설정의 검증에 실패했습니다. 관리자 비밀번호·운영 알림 설정 확인 필요, 기존 설정 유지." >&2
+    exit 1
+  fi
+fi
 rm -f -- "${compose_validation_output}"
 compose_validation_output=""
 

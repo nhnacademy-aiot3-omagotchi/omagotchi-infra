@@ -269,4 +269,32 @@ for scenario in missing-chat removed-both empty-token; do
   assert_contains '후보 운영 알림 설정의 검증에 실패했습니다' "${output_file}" '알림 설정 오류 안내 누락'
 done
 
+# Grafana 도입 이후의 관리자 비밀번호 누락 차단. 기존 앱·로그 전용 설정의 최초 도입은 위에서 검증.
+candidate="${secrets_dir}/.incoming-prod.env.grafana"
+cp "${TEST_TMP_DIR}/alerts.env" "${candidate}"
+grep '^GRAFANA_ADMIN_PASSWORD=' "${INFRA_DIR}/.env.prod.example" >>"${candidate}"
+SYNC_TEST_EVENTS="${events_file}" PATH="${fake_bin}:${PATH}" \
+  bash "${INFRA_DIR}/scripts/sync-runtime-config.sh" \
+    "${fixture_dir}" "${sha}" "${candidate}" >"${output_file}" 2>&1
+cp "${secrets_dir}/prod.env" "${TEST_TMP_DIR}/grafana.env"
+cp "${secrets_dir}/prod.env.previous" "${TEST_TMP_DIR}/grafana-previous.env"
+
+for scenario in removed-password empty-password; do
+  candidate="${secrets_dir}/.incoming-prod.env.${scenario}"
+  case "${scenario}" in
+    removed-password) sed '/^GRAFANA_ADMIN_PASSWORD=/d' "${TEST_TMP_DIR}/grafana.env" >"${candidate}" ;;
+    empty-password) sed 's/^GRAFANA_ADMIN_PASSWORD=.*/GRAFANA_ADMIN_PASSWORD=/' "${TEST_TMP_DIR}/grafana.env" >"${candidate}" ;;
+  esac
+  if SYNC_TEST_EVENTS="${events_file}" PATH="${fake_bin}:${PATH}" \
+    bash "${INFRA_DIR}/scripts/sync-runtime-config.sh" \
+      "${fixture_dir}" "${sha}" "${candidate}" >"${output_file}" 2>&1; then
+    fail "불완전한 Grafana 설정의 동기화 허용: ${scenario}"
+  fi
+  cmp -s "${TEST_TMP_DIR}/grafana.env" "${secrets_dir}/prod.env" || fail 'Grafana 설정 오류 후 운영본 변경'
+  cmp -s "${TEST_TMP_DIR}/grafana-previous.env" "${secrets_dir}/prod.env.previous" || fail 'Grafana 설정 오류 후 복구본 변경'
+  [[ ! -e "${candidate}" ]] || fail 'Grafana 설정 오류 후 후보 파일 잔존'
+  assert_contains '후보 Grafana 설정의 검증에 실패했습니다' "${output_file}" 'Grafana 설정 오류 안내 누락'
+  assert_not_contains 'replace-with-long-random' "${output_file}" 'Grafana 비밀번호 출력'
+done
+
 echo "Runtime configuration sync tests passed"
