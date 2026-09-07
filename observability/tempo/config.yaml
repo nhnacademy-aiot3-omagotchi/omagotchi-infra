@@ -1,0 +1,37 @@
+# 단일 Process·Local Volume. Kafka·Object Storage·Metrics Generator 미사용.
+stream_over_http_enabled: true
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+querier:
+  max_concurrent_queries: 2
+
+overrides:
+  defaults:
+    compaction:
+      block_retention: 72h
+    ingestion:
+      rate_limit_bytes: 262144
+      burst_size_bytes: 524288
+      max_traces_per_user: 5000
+    global:
+      max_bytes_per_trace: 1048576
+
+usage_report:
+  reporting_enabled: false

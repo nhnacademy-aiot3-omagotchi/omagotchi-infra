@@ -11,3 +11,13 @@ datasources:
     jsonData:
       httpMethod: POST
       timeInterval: 15s
+  - name: Omagotchi Tempo
+    uid: omagotchi-tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      # 기존 HTTP 메트릭과 중복되는 Service Graph·Span Metrics 미활성화.
+      nodeGraph:
+        enabled: false

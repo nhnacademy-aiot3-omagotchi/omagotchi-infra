@@ -48,3 +48,7 @@ scrape_configs:
     static_configs:
       - targets: [prometheus:9090]
         labels: {service: prometheus}
+      - targets: [otel-collector:8888]
+        labels: {service: otel-collector}
+      - targets: [tempo:3200]
+        labels: {service: tempo}

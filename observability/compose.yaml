@@ -1,6 +1,6 @@
 name: omagotchi-observability
 
-# 메트릭 도구 공통 실행 제한. 앱·Filebeat와 독립된 선택 Profile.
+# 메트릭·트레이스 도구 공통 실행 제한. 앱·Filebeat와 독립된 선택 Profile.
 x-telemetry: &telemetry
   read_only: true
   cap_drop: [ALL]
@@ -161,8 +161,38 @@ services:
     tmpfs:
       - /tmp:size=16m,mode=1777
 
+  otel-collector:
+    <<: *telemetry
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    profiles: [tracing]
+    mem_limit: 384m
+    cpus: 0.5
+    command: [--config=/etc/otelcol-contrib/config.yaml]
+    environment:
+      GOMEMLIMIT: 300MiB
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    networks:
+      default:
+      app:
+        aliases: [omagotchi-otel-collector]
+
+  tempo:
+    <<: *telemetry
+    image: grafana/tempo:3.0.3
+    profiles: [tracing]
+    mem_limit: 4g
+    cpus: 1.0
+    command: [-target=all, -config.file=/etc/tempo/config.yaml]
+    environment:
+      GOMEMLIMIT: 3GiB
+    volumes:
+      - ./tempo/config.yaml:/etc/tempo/config.yaml:ro
+      # 공식 이미지의 /var/tempo 소유권 10001:10001을 새 Named Volume에 복사.
+      - tempo-data:/var/tempo
+
 networks:
-  # Prometheus의 내부 Scrape만 앱 Network 사용.
+  # Prometheus의 내부 Scrape와 애플리케이션의 OTLP 전송만 앱 Network 사용.
   app:
     external: true
     name: omagotchi-net
@@ -171,3 +201,4 @@ volumes:
   filebeat-data:
   prometheus-data:
   grafana-data:
+  tempo-data:

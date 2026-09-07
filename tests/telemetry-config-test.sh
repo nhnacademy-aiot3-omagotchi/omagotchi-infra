@@ -7,7 +7,7 @@ INFRA_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 cd "${INFRA_DIR}"
 
 docker compose --env-file .env.prod.example --file observability/compose.yaml \
-  --profile metrics config --quiet
+  --profile metrics --profile tracing config --quiet
 jq -e . observability/grafana/dashboards/http-overview.json >/dev/null
 
 # 로컬 Docker 장애 시 동일 버전의 공식 Native Binary로 검증 가능.
@@ -26,4 +26,17 @@ else
     test rules tests/fixtures/prometheus-http-rules.yml
 fi
 
-echo '메트릭 설정과 HTTP 오류 집계 검증 통과. Grafana 기동 검증은 별도.'
+if [[ -n "${OTELCOL_BIN:-}" ]]; then
+  "${OTELCOL_BIN}" validate --config observability/otel-collector/config.yaml
+else
+  docker run --rm --network none --read-only \
+    --mount "type=bind,src=${INFRA_DIR}/observability/otel-collector/config.yaml,dst=/config.yaml,readonly" \
+    otel/opentelemetry-collector-contrib:0.160.0 validate --config /config.yaml
+fi
+
+# 운영 Compose와 같은 단일 프로세스 설정 검사. 실제 기동·저장 검증은 별도.
+docker run --rm --network none --read-only \
+  --mount "type=bind,src=${INFRA_DIR}/observability/tempo/config.yaml,dst=/config.yaml,readonly" \
+  grafana/tempo:3.0.3 -target=all -config.file=/config.yaml -config.verify=true
+
+echo '메트릭·트레이스 설정과 HTTP 오류 집계 검증 통과. Tempo·Grafana 기동 검증은 별도.'
