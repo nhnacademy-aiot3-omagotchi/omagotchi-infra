@@ -183,7 +183,8 @@ git merge-base --is-ancestor "${old_sha}" "${sha}" || {
   exit 1
 }
 
-git merge --ff-only "${sha}"
+# 공개 Git 파일의 읽기 권한 보존. 이후 Secret 생성에는 기존 umask 077 유지.
+(umask 022; git merge --ff-only "${sha}")
 
 [[ -x "${COMPOSE_SCRIPT}" ]] || {
   echo "compose.sh 실행 권한이 없습니다." >&2

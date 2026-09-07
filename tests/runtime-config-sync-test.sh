@@ -62,7 +62,8 @@ case "$1" in
     fi
     ;;
   rev-parse) printf '0000000000000000000000000000000000000000\n' ;;
-  fetch | cat-file | merge-base | merge) ;;
+  fetch | cat-file | merge-base) ;;
+  merge) mkdir -p checkout-fixture; touch checkout-fixture/public.conf ;;
   *) exit 1 ;;
 esac
 EOF
@@ -107,6 +108,10 @@ assert_contains 'CURRENT_SECRET=old-runtime-value' "${secrets_dir}/prod.env.prev
   fail "확정된 prod.env 권한이 600이 아닙니다."
 [[ "$(file_mode "${secrets_dir}/prod.env.previous")" == "600" ]] || \
   fail "prod.env.previous 권한이 600이 아닙니다."
+[[ "$(file_mode "${fixture_dir}/checkout-fixture/public.conf")" == "644" ]] || \
+  fail "Git 갱신으로 생성한 공개 파일의 읽기 권한 누락"
+[[ "$(file_mode "${fixture_dir}/checkout-fixture")" == "755" ]] || \
+  fail "Git 갱신으로 생성한 공개 디렉터리의 탐색 권한 누락"
 assert_contains 'compose:config --quiet' "${events_file}" \
   "Runtime 설정 교체 전 Compose 검증이 실행되지 않았습니다."
 [[ "$(wc -l <"${events_file}" | tr -d '[:space:]')" == "1" ]] || \

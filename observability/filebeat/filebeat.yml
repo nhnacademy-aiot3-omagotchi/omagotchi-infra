@@ -9,7 +9,8 @@ filebeat.autodiscover:
         - condition:
             and:
               - equals:
-                  docker.container.labels.com.docker.compose.project: omagotchi
+                  # project와 project.working_dir 등의 공존에 따른 원래 값의 .value 이동.
+                  docker.container.labels.com.docker.compose.project.value: omagotchi
               - equals:
                   docker.container.labels.co.elastic.logs/enabled: "true"
           config:
