@@ -16,6 +16,17 @@ SENSITIVE_VALUE="sensitive-${TEST_SUFFIX}"
 SPOOFED_REQUEST_ID="spoofed-request-id-${TEST_SUFFIX}"
 
 cleanup() {
+  local exit_status=$?
+
+  # 실패 원인 보존을 위한 테스트 전용 Container의 삭제 전 진단.
+  if ((exit_status != 0)); then
+    docker inspect --format '{{.Name}}: {{.State.Status}}' \
+      "${PROXY_NAME}" "${UPSTREAM_NAME}" >&2 || true
+    docker logs --tail=30 "${PROXY_NAME}" >&2 || true
+    docker logs --tail=30 "${UPSTREAM_NAME}" >&2 || true
+    docker exec "${PROXY_NAME}" tail -n 30 /var/log/nginx/error.log >&2 || true
+  fi
+
   docker rm -f "${PROXY_NAME}" "${UPSTREAM_NAME}" >/dev/null 2>&1 || true
   docker network rm "${NETWORK_NAME}" >/dev/null 2>&1 || true
   rm -rf -- "${TEMP_DIR}"
@@ -57,17 +68,28 @@ response_request_id() {
   printf '%s' "${request_id}"
 }
 
-wait_until_ready() {
+wait_until_upstreams_ready() {
   local port="$1"
+  local path
+  local response_status
 
-  for _ in {1..30}; do
-    if curl --silent --show-error --fail "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
-      return
-    fi
-    sleep 0.2
+  # 자체 /health와 별개인 동적 DNS 해석·모의 Gateway·Frontend 연결 준비.
+  # Request ID 검증은 준비 확인 이후 별도 요청에서 수행.
+  for path in /api/v1/rules/readiness /test-readiness; do
+    for _ in {1..30}; do
+      response_status="$(curl --silent --show-error \
+        --connect-timeout 1 --max-time 2 \
+        --output /dev/null --write-out '%{http_code}' \
+        "http://127.0.0.1:${port}${path}" 2>/dev/null || true)"
+      if [[ "${response_status}" == "204" ]]; then
+        break
+      fi
+      sleep 0.2
+    done
+
+    [[ "${response_status}" == "204" ]] ||
+      fail "Nginx 경유 요청 준비 실패: ${path} (HTTP ${response_status})"
   done
-
-  fail "Nginx 테스트 Container가 준비되지 않았습니다."
 }
 
 docker network create "${NETWORK_NAME}" >/dev/null
@@ -91,7 +113,7 @@ PROXY_PORT="$(
   docker inspect --format '{{(index (index .NetworkSettings.Ports "80/tcp") 0).HostPort}}' \
     "${PROXY_NAME}"
 )"
-wait_until_ready "${PROXY_PORT}"
+wait_until_upstreams_ready "${PROXY_PORT}"
 
 API_HEADERS="${TEMP_DIR}/api-headers"
 curl --silent --show-error \
@@ -102,6 +124,8 @@ curl --silent --show-error \
   --data "${SENSITIVE_VALUE}" \
   "http://127.0.0.1:${PROXY_PORT}/api/v1/rules/${SENSITIVE_VALUE}?secret=${SENSITIVE_VALUE}"
 
+[[ "$(status_code "${API_HEADERS}")" == "204" ]] ||
+  fail "Gateway 정상 요청 실패: HTTP $(status_code "${API_HEADERS}")"
 API_REQUEST_ID="$(response_request_id "API 요청" "${API_HEADERS}")"
 [[ "${API_REQUEST_ID}" != "${SPOOFED_REQUEST_ID}" ]] ||
   fail "외부 Request ID가 Nginx 경계에서 교체되지 않았습니다."
@@ -115,6 +139,8 @@ curl --silent --show-error \
   --header "X-Request-ID: ${SPOOFED_REQUEST_ID}" \
   "http://127.0.0.1:${PROXY_PORT}/admin/audit"
 
+[[ "$(status_code "${FRONTEND_HEADERS}")" == "204" ]] ||
+  fail "Frontend 정상 요청 실패: HTTP $(status_code "${FRONTEND_HEADERS}")"
 FRONTEND_REQUEST_ID="$(response_request_id "Frontend 요청" "${FRONTEND_HEADERS}")"
 [[ "${FRONTEND_REQUEST_ID}" != "${SPOOFED_REQUEST_ID}" ]] ||
   fail "외부 Request ID가 Frontend 경계에서 교체되지 않았습니다."
