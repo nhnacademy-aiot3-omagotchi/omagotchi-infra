@@ -1,5 +1,18 @@
 name: omagotchi-observability
 
+# 메트릭·트레이스 도구 공통 실행 제한. 앱·Filebeat와 독립된 선택 Profile.
+x-telemetry: &telemetry
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 # 애플리케이션 배포의 --remove-orphans와 분리된 관측 전용 프로젝트.
 x-filebeat: &filebeat
   image: docker.elastic.co/beats/filebeat:8.19.3
@@ -91,5 +104,101 @@ services:
     command: [setup]
     restart: "no"
 
+  prometheus:
+    <<: *telemetry
+    image: prom/prometheus:v3.13.2
+    profiles: [metrics]
+    mem_limit: 512m
+    cpus: 0.5
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=2GB
+      - --query.max-concurrency=4
+      - --query.timeout=15s
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    networks: [default, app]
+
+  grafana:
+    <<: *telemetry
+    image: grafana/grafana:13.2.1
+    profiles: [metrics]
+    mem_limit: 512m
+    cpus: 0.5
+    # 비활성 Profile의 기존 로그 수집은 허용, 실제 Grafana 시작 시 빈 비밀번호 차단.
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - |
+        : "$${GF_SECURITY_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}"
+        : "$${OPS_TELEGRAM_BOT_TOKEN:?OPS_TELEGRAM_BOT_TOKEN is required}"
+        : "$${OPS_TELEGRAM_CHAT_ID:?OPS_TELEGRAM_CHAT_ID is required}"
+        exec /run.sh
+    environment:
+      GOMEMLIMIT: 384MiB
+      GF_SECURITY_ADMIN_USER: omagotchi-admin
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-}"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_LOG_MODE: console
+      GF_LOG_CONSOLE_FORMAT: json
+      OPS_TELEGRAM_BOT_TOKEN: "${OPS_TELEGRAM_BOT_TOKEN:-}"
+      OPS_TELEGRAM_CHAT_ID: "${OPS_TELEGRAM_CHAT_ID:-}"
+    ports:
+      # 서버 외부 공개 금지. SSH Local Forward 전용.
+      - "127.0.0.1:13000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+
+  otel-collector:
+    <<: *telemetry
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    profiles: [tracing]
+    mem_limit: 384m
+    cpus: 0.5
+    command: [--config=/etc/otelcol-contrib/config.yaml, --feature-gates=ottl.set.allowNil]
+    environment:
+      GOMEMLIMIT: 300MiB
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    networks:
+      default:
+      app:
+        aliases: [omagotchi-otel-collector]
+
+  tempo:
+    <<: *telemetry
+    image: grafana/tempo:3.0.3
+    profiles: [tracing]
+    mem_limit: 4g
+    cpus: 1.0
+    command: [-target=all, -config.file=/etc/tempo/config.yaml]
+    environment:
+      GOMEMLIMIT: 3GiB
+    volumes:
+      - ./tempo/config.yaml:/etc/tempo/config.yaml:ro
+      # 공식 이미지의 /var/tempo 소유권 10001:10001을 새 Named Volume에 복사.
+      - tempo-data:/var/tempo
+
+networks:
+  # Prometheus의 내부 Scrape와 애플리케이션의 OTLP 전송만 앱 Network 사용.
+  app:
+    external: true
+    name: omagotchi-net
+
 volumes:
   filebeat-data:
+  prometheus-data:
+  grafana-data:
+  tempo-data:

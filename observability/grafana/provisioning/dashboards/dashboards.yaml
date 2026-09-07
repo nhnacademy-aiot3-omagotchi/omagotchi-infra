@@ -1,0 +1,11 @@
+apiVersion: 1
+providers:
+  - name: omagotchi
+    orgId: 1
+    folder: Omagotchi
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards

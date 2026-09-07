@@ -1,0 +1,54 @@
+global:
+  scrape_interval: 15s
+  scrape_timeout: 5s
+  evaluation_interval: 15s
+  # 과도한 Endpoint 응답은 수집 실패로 처리, 무제한 Series 유입 방지.
+  body_size_limit: 5MB
+  sample_limit: 10000
+  label_limit: 30
+  label_name_length_limit: 100
+  label_value_length_limit: 256
+
+rule_files: [http-rules.yml]
+
+scrape_configs:
+  - job_name: spring-services
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [gateway-service:8080]
+        labels: {service: gateway-service}
+      - targets: [rule-engine-a:8080, rule-engine-b:8080]
+        labels: {service: rule-service}
+      - targets: [identity-service:8080]
+        labels: {service: identity-service}
+      - targets: [learning-service:8080]
+        labels: {service: learning-service}
+      - targets: [frontend:8080]
+        labels: {service: frontend}
+      - targets: [discovery-service:8761]
+        labels: {service: discovery-service}
+    # 원본 URL·사용자 식별자가 붙은 별도 업무 Meter는 최초 수집에서 제외.
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: '(http_server_requests_seconds_(count|sum|bucket)|jvm_.*|process_.*|system_cpu_.*)'
+        action: keep
+
+  # Prediction의 Metric 이름·Label 계약 확정 전에는 HTTP 집계에 합산하지 않음.
+  - job_name: prediction-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: [prediction-service:8080]
+        labels: {service: prediction-service}
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'process_.*'
+        action: keep
+
+  - job_name: observability
+    static_configs:
+      - targets: [prometheus:9090]
+        labels: {service: prometheus}
+      - targets: [otel-collector:8888]
+        labels: {service: otel-collector}
+      - targets: [tempo:3200]
+        labels: {service: tempo}
