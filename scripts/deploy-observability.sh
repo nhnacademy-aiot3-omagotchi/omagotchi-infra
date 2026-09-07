@@ -3,7 +3,7 @@ set +x
 set -euo pipefail
 
 # 전체 Infra 배포의 관측성 단계. Revision 확인·배포 Lock은 deploy-infra.sh의 책임.
-# 초기화·Volume 삭제·업무 Container 변경 없이 기존 관측 저장소 재사용.
+# 기존 저장소 재사용·알림 저장소 전체 부재 시 최초 생성. Volume·업무 Container 유지.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SERVICES=(filebeat elastalert prometheus grafana otel-collector tempo)
 
@@ -24,8 +24,8 @@ fi
 
 # 다운로드·접속·초기화 상태를 먼저 확인, 준비 실패 시 실행 중인 도구 유지.
 compose pull "${SERVICES[@]}"
-if ! compose run --rm -T --no-deps elastalert check; then
-  echo "관측 저장소 준비 실패. 기존 자원·부분 생성 여부 확인 필요. 자동 초기화 없음." >&2
+if ! compose run --rm -T --no-deps elastalert prepare; then
+  echo "관측 저장소 준비 실패. 로그 저장소·알림 상태의 기존 자원·부분 생성 여부 확인 필요." >&2
   exit 1
 fi
 if ! compose run --rm -T --no-deps filebeat \

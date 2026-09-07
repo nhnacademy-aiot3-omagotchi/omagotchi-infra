@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 from elasticsearch import TransportError
 from elastalert.util import elasticsearch_client
 
-from bootstrap import AlertPreparationError, setup_state_indices, verify_state_aliases
+from bootstrap import AlertPreparationError, ensure_state_indices, setup_state_indices, verify_state_aliases
 
 CONFIG = "/opt/elastalert/omagotchi/config.yaml"
 
@@ -36,11 +36,11 @@ def main():
     try:
         connection = configure_connection()
         mode = sys.argv[1] if len(sys.argv) == 2 else ""
-        if mode not in ("run", "setup", "check"):
-            raise AlertPreparationError("실행 모드 run·setup·check 중 하나 지정 필요")
+        if mode not in ("run", "setup", "check", "prepare"):
+            raise AlertPreparationError("실행 모드 run·setup·check·prepare 중 하나 지정 필요")
         # 상태 초기화에는 Telegram 인증 정보 불필요. 상시 실행 전에는 필수.
-        if mode in ("run", "check") and (not os.environ.get("OPS_TELEGRAM_BOT_TOKEN")
-                                        or not os.environ.get("OPS_TELEGRAM_CHAT_ID")):
+        if mode in ("run", "check", "prepare") and (not os.environ.get("OPS_TELEGRAM_BOT_TOKEN")
+                                                   or not os.environ.get("OPS_TELEGRAM_CHAT_ID")):
             raise AlertPreparationError("운영 알림 Bot Token·Chat ID 설정 필요")
         stage = "Elasticsearch 연결·버전 확인"
         client = elasticsearch_client(connection)
@@ -50,6 +50,15 @@ def main():
             stage = "상태 저장소 최초 생성 — 실패 시 부분 생성 여부 확인"
             setup_state_indices(client)
             print("알림 상태 저장소 최초 생성 완료. Telegram 전송 없음.")
+            return
+        if mode == "prepare":
+            # 로그 저장소가 준비되지 않았으면 알림 상태 생성도 시작하지 않음.
+            stage = "로그 Data Stream 확인"
+            client.indices.get_data_stream(name="logs-omagotchi-prod")
+            stage = "알림 상태 저장소 자동 준비 — 실패 시 기존·부분 생성 상태 확인"
+            created = ensure_state_indices(client)
+            print("알림 상태 저장소 최초 생성 완료." if created else "기존 알림 상태 저장소 재사용.")
+            print("관측 저장소 연결·상태 Alias·로그 Data Stream 확인 완료. Telegram 전송 없음.")
             return
         stage = "상태 Alias의 쓰기 대상 확인"
         verify_state_aliases(client)
