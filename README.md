@@ -23,7 +23,9 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
 - Nginx
 - Cloudflare Tunnel
 
-운영 서비스는 `omagotchi-net` 내부 Network를 사용하며 외부 요청은 Nginx를 통해서만 수신.
+- 업무 서비스: `omagotchi-net` 내부 Network 사용, 외부 요청의 Nginx 경유
+- Grafana: Cloudflare Access → 기존 Tunnel → 전용 Network로 별도 연결
+  - Infra 배포와 [Cloudflare 접속 설정](observability/grafana-access.md) 완료 후 사용
 
 ## 설정 계약
 

@@ -27,13 +27,21 @@ chmod 755 "${TEST_TMP_DIR}"
 chmod 644 "${TEST_TMP_DIR}/resolv.conf"
 
 docker compose --env-file "${INFRA_DIR}/.env.prod.example" \
+  --env-file "${INFRA_DIR}/deploy.env.example" --file "${INFRA_DIR}/compose.yaml" \
+  config --format json >"${TEST_TMP_DIR}/app-compose.json"
+
+docker compose --env-file "${INFRA_DIR}/.env.prod.example" \
   --file "${INFRA_DIR}/observability/compose.yaml" --profile metrics --profile tracing config --format json \
-  | jq --arg resolver "${TEST_TMP_DIR}/resolv.conf" '
+  | jq --arg resolver "${TEST_TMP_DIR}/resolv.conf" --slurpfile app "${TEST_TMP_DIR}/app-compose.json" '
+    if .networks["grafana-ingress"].name != $app[0].networks["grafana-ingress"].name
+    then error("업무·관측 Compose의 Grafana 연결 Network 불일치") else . end
+    | . as $observability
+    |
     {services: {grafana: .services.grafana, prometheus: .services.prometheus,
                 "otel-collector": .services["otel-collector"], tempo: .services.tempo},
-     networks: {default: {internal: true}},
+     networks: {default: {internal: true}, "grafana-ingress": {internal: true}},
      volumes: {"grafana-data": {}, "prometheus-data": {}, "tempo-data": {}}}
-    | .services[].networks = {default: null}
+    | .services[].networks |= del(.app)
     | .services[].restart = "no"
     | del(.services[].profiles, .services.grafana.ports)
     | .services.grafana.environment.GF_SECURITY_ADMIN_PASSWORD = "fixture-password"
@@ -41,6 +49,11 @@ docker compose --env-file "${INFRA_DIR}/.env.prod.example" \
     | .services.grafana.environment.OPS_TELEGRAM_CHAT_ID = "-100123"
     | .services.prometheus.volumes += [{type: "bind", source: $resolver,
         target: "/etc/resolv.conf", read_only: true}]
+    | .services["ingress-probe"] = {
+        image: $observability.services.prometheus.image,
+        entrypoint: ["/bin/sh", "-c", "sleep 3600"],
+        networks: ($app[0].services.cloudflared.networks | del(.["omagotchi-net"]))
+      }
   ' >"${TEST_TMP_DIR}/compose.json"
 
 compose up -d --wait --wait-timeout 90 >"${TEST_TMP_DIR}/startup.log" 2>&1 || {
@@ -71,3 +84,33 @@ compose exec -T --interactive=false prometheus \
   | jq -e '.database == "ok"' >/dev/null
 
 echo 'Prometheus·Grafana·Collector·Tempo의 search . 환경 HTTP 준비 응답 검증 통과.'
+
+# 실제 Tunnel 대신 기존 이미지의 HTTP 도구 사용. 새 인입 Network의 연결·인증 경계 점검.
+compose exec -T --interactive=false ingress-probe wget -q -T 5 -O - http://grafana:3000/login \
+  >"${TEST_TMP_DIR}/login.html"
+grep -Fq 'https://grafana.omagotchi.site/' "${TEST_TMP_DIR}/login.html"
+
+if compose exec -T --interactive=false ingress-probe wget -S -T 5 -O /dev/null \
+  http://grafana:3000/api/user >"${TEST_TMP_DIR}/anonymous.log" 2>&1; then
+  echo '인증 없는 Grafana 사용자 정보 접근 허용' >&2
+  exit 1
+fi
+grep -q 'HTTP/1.1 401' "${TEST_TMP_DIR}/anonymous.log"
+
+compose exec -T --interactive=false ingress-probe wget -S -T 5 -O /dev/null \
+  --header 'Content-Type: application/json' \
+  --header 'Host: grafana.omagotchi.site' --header 'X-Forwarded-Proto: https' \
+  --header 'Origin: https://grafana.omagotchi.site' \
+  --post-data '{"user":"omagotchi-admin","password":"fixture-password"}' \
+  http://grafana:3000/login >"${TEST_TMP_DIR}/login.log" 2>&1
+grep -Eq 'Set-Cookie: grafana_session=.*; Secure;' "${TEST_TMP_DIR}/login.log"
+
+# 전용 인입 Network에 저장소·수집기를 추가하지 않았는지 확인. 기존 앱 Network는 별도.
+for endpoint in http://prometheus:9090/-/ready http://tempo:3200/ready http://otel-collector:13133/; do
+  if compose exec -T --interactive=false ingress-probe wget -q -T 2 -O /dev/null "${endpoint}" \
+    >"${TEST_TMP_DIR}/isolation.log" 2>&1; then
+    echo "Grafana 인입 Network의 관측 도구 직접 접근 허용: ${endpoint}" >&2
+    exit 1
+  fi
+done
+echo 'Grafana 인입 연결·로그인·Secure Cookie·전용 Network 분리 검증 통과.'
