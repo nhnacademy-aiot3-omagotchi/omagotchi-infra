@@ -292,6 +292,7 @@ for scenario in removed-password empty-password; do
   fi
   cmp -s "${TEST_TMP_DIR}/grafana.env" "${secrets_dir}/prod.env" || fail 'Grafana 설정 오류 후 운영본 변경'
   cmp -s "${TEST_TMP_DIR}/grafana-previous.env" "${secrets_dir}/prod.env.previous" || fail 'Grafana 설정 오류 후 복구본 변경'
+  [[ ! -e "${candidate}" ]] || fail 'Grafana 설정 오류 후 후보 파일 잔존'
   assert_contains '후보 Grafana 설정의 검증에 실패했습니다' "${output_file}" 'Grafana 설정 오류 안내 누락'
   assert_not_contains 'replace-with-long-random' "${output_file}" 'Grafana 비밀번호 출력'
 done
