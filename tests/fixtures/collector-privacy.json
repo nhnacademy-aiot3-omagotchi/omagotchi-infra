@@ -126,6 +126,56 @@
         "attributes": [
           {"key": "prediction.features", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
         ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "cccccccccccccccc",
+        "parentSpanId": "3333333333333333",
+        "name": "http get /api/v1/rules/{ruleId}",
+        "kind": 2,
+        "startTimeUnixNano": "1788739200000000000",
+        "endTimeUnixNano": "1788739200010000000",
+        "attributes": [
+          {"key": "method", "value": {"stringValue": "GET"}},
+          {"key": "status", "value": {"stringValue": "200"}},
+          {"key": "uri", "value": {"stringValue": "/api/v1/rules/{ruleId}"}},
+          {"key": "outcome", "value": {"stringValue": "SUCCESS"}},
+          {"key": "exception", "value": {"stringValue": "none"}},
+          {"key": "http.url", "value": {"stringValue": "/api/v1/rules/PRIVATE_FIXTURE_SECRET"}}
+        ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "dddddddddddddddd",
+        "parentSpanId": "cccccccccccccccc",
+        "name": "http post",
+        "kind": 3,
+        "startTimeUnixNano": "1788739200001000000",
+        "endTimeUnixNano": "1788739200002000000",
+        "attributes": [
+          {"key": "method", "value": {"stringValue": "POST"}},
+          {"key": "status", "value": {"stringValue": "200"}},
+          {"key": "uri", "value": {"stringValue": "/api/PRIVATE_FIXTURE_SECRET?serviceKey=PRIVATE_FIXTURE_SECRET"}},
+          {"key": "client.name", "value": {"stringValue": "example.invalid"}},
+          {"key": "outcome", "value": {"stringValue": "SUCCESS"}},
+          {"key": "exception", "value": {"stringValue": "none"}},
+          {"key": "http.url", "value": {"stringValue": "https://example.invalid/api/PRIVATE_FIXTURE_SECRET?serviceKey=PRIVATE_FIXTURE_SECRET"}}
+        ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "eeeeeeeeeeeeeeee",
+        "parentSpanId": "cccccccccccccccc",
+        "name": "http get",
+        "kind": 3,
+        "startTimeUnixNano": "1788739200002000000",
+        "endTimeUnixNano": "1788739200003000000",
+        "status": {"code": 2, "message": "PRIVATE_FIXTURE_SECRET"},
+        "attributes": [
+          {"key": "method", "value": {"stringValue": "GET"}},
+          {"key": "status", "value": {"stringValue": "IO_ERROR"}},
+          {"key": "uri", "value": {"stringValue": "none"}},
+          {"key": "client.name", "value": {"stringValue": "example.invalid"}},
+          {"key": "outcome", "value": {"stringValue": "UNKNOWN"}},
+          {"key": "exception", "value": {"stringValue": "IOException"}}
+        ]
       }]
     }]
   }]

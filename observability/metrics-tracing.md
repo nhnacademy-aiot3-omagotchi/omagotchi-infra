@@ -128,6 +128,13 @@
 | AI 모델·도구 | 모델·작업·도구 이름·토큰 사용량 | `AI`·`AI tool` |
 | 수동 업무 계측 | 합의된 고정 작업 이름 | 아래 허용 이름 |
 
+- Spring HTTP 속성의 표준 Key 변환 후 허용 목록 적용
+  - `method` → `http.request.method`, 숫자 `status` → 정수 `http.response.status_code`
+  - 서버 `uri`의 매핑 경로 → `http.route`, `root` → `/`, 미확정 경로의 생략
+  - 클라이언트 `client.name` → `server.address`, 예외 클래스 `exception` → `error.type`
+  - 클라이언트 `uri`의 원본 경로·Query 포함 가능성에 따른 미저장, 대상 호스트·Method·시간으로 호출 구분
+  - `IO_ERROR`·`CLIENT_ERROR`·`UNKNOWN`의 상태 코드 변환 제외, Span·오류 상태 보존
+  - 이미 존재하는 OTel 표준 속성 우선, 서비스별 변환 코드 추가 없음
 - 수동 Span 이름: `prediction.inference`, `sensor.process`, `influxdb.query`, `influxdb.write`, `storage.upload`, `storage.download`, `job.execute`
   - 후속 서비스 작업의 이름 계약, 해당 Span의 생성·Export 구현 완료를 뜻하지 않음
   - 사용자·장치·파일·작업 ID를 이름에 붙이지 않는 방식
@@ -246,6 +253,7 @@ curl --disable --fail --silent --show-error --max-time 5 http://127.0.0.1:13000/
   - Tempo `-config.verify=true`: 고정 버전의 설정 해석·유효성 검사, Container 기동·저장 검증과 구분
 - `tests/collector-privacy-test.sh`: HTTP·미분류 Internal·DB·Redis·AI·Tool·Messaging·수동 Span 입력
   - Span 개수·ID·Kind·시간·Parent 관계 보존, 종류별 이름·허용 속성 확인
+  - Spring 서버·클라이언트 속성의 표준 Key 변환, 응답 없는 호출의 Span 보존
   - Scope 이름·버전, URL·SQL·대화·메시지·Event·Link의 가짜 민감정보 제거
 - `tests/runtime-config-sync-test.sh`: Grafana 비밀번호 누락·빈 값의 거절, 기존 운영본·복구본 보존과 후보 파일 삭제
 - Promtool·Collector의 공식 Native Binary 사용 가능: `PROMTOOL_BIN`·`OTELCOL_BIN`, Image와 같은 고정 버전 필요
