@@ -163,6 +163,9 @@ shellcheck scripts/*.sh tests/*.sh
   - Bind Mount 파일 변경·환경변수·Image 반영, 단순 `up`의 설정 변경 누락 방지
   - Infra 배포 중 짧은 수집 공백 가능, Trace·알림의 무손실 보장 아님
 - 완료 조건: 네 도구의 HTTP 준비 응답과 여섯 Runtime Container의 실행 상태
+  - 점검 시작·완료 Endpoint 출력, DNS·연결·HTTP 오류의 구분
+  - Prometheus의 wget에서 `grafana.`·`otel-collector.`·`tempo.` 사용
+    - 서버 resolver의 `search .` 환경에서 짧은 이름 조회가 실패하는 상황 방지
   - 새 Container의 자동 재시작 0회, 재시작 Loop의 일시적 Running 상태도 실패 처리
   - 전체 서비스 Scrape·Trace 저장·Telegram 수신은 별도 운영 검증
 - 실패 처리: Actions 실패, 이미 배포된 업무 서비스의 자동 Rollback 없음

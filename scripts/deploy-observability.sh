@@ -41,16 +41,20 @@ compose up -d --no-deps --force-recreate --wait --wait-timeout 180 "${SERVICES[@
 
 # Running 상태와 HTTP 준비 상태의 구분. 기존 Prometheus 이미지의 wget 재사용.
 # Collector·Tempo 확인을 위한 Host Port·진단 Container 추가 없음.
+# 끝의 점은 DNS 검색 도메인을 적용하지 않는 절대 이름. 서버의 search . 설정에서
+# BusyBox wget이 짧은 이름을 해석하지 못하는 경우에도 Docker DNS로 직접 조회.
 deadline=$((SECONDS + 180))
 for endpoint in \
   http://127.0.0.1:9090/-/ready \
-  http://grafana:3000/api/health \
-  http://otel-collector:13133/ \
-  http://tempo:3200/ready; do
+  http://grafana.:3000/api/health \
+  http://otel-collector.:13133/ \
+  http://tempo.:3200/ready; do
+  echo "관측 도구의 HTTP 준비 확인 시작: ${endpoint}"
   ready=false
+  probe_error=""
   while ((SECONDS < deadline)); do
-    if compose exec -T --interactive=false prometheus \
-      wget -q -T 5 -O /dev/null "${endpoint}" >/dev/null 2>&1; then
+    if probe_error="$(compose exec -T --interactive=false prometheus \
+      wget -q -T 5 -O /dev/null "${endpoint}" 2>&1)"; then
       ready=true
       break
     fi
@@ -58,8 +62,17 @@ for endpoint in \
   done
   if [[ "${ready}" != true ]]; then
     echo "관측 도구의 HTTP 준비 확인 실패: ${endpoint}" >&2
+    # 응답·인증값 원문 대신 점검 실패의 종류만 남김.
+    case "${probe_error}" in
+      *'bad address'*) echo '원인: 점검 컨테이너의 DNS 이름 조회 실패.' >&2 ;;
+      *'Connection refused'*) echo '원인: 대상 HTTP 연결 거절.' >&2 ;;
+      *'timed out'*) echo '원인: 대상 HTTP 응답 시간 초과.' >&2 ;;
+      *'server returned error'*) echo '원인: 대상 HTTP 오류 응답.' >&2 ;;
+      *) echo '원인: 점검 명령 실패 또는 준비 대기 시간 소진. 대상 컨테이너 상태 확인 필요.' >&2 ;;
+    esac
     exit 1
   fi
+  echo "관측 도구의 HTTP 준비 확인 완료: ${endpoint}"
 done
 
 # 재시작 Loop의 잠깐 Running인 순간을 성공으로 처리하지 않는 경계.

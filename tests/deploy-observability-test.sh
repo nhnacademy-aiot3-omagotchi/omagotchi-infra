@@ -83,11 +83,13 @@ for scenario in success retry missing-secret pull-failure prepare-failure output
   case "${scenario}" in
     success | retry)
       [[ "$status" == 0 ]] || { cat "${output}"; exit 1; }
-      for endpoint in '127.0.0.1:9090/-/ready' 'grafana:3000/api/health' 'otel-collector:13133/' 'tempo:3200/ready'; do
+      for endpoint in '127.0.0.1:9090/-/ready' 'grafana.:3000/api/health' 'otel-collector.:13133/' 'tempo.:3200/ready'; do
         grep -Fq "$endpoint" "${events}"
       done
       grep -Fq 'filebeat test output' "${events}"
       grep -Fq 'elastalert prepare' "${events}"
+      grep -Fq 'HTTP 준비 확인 시작: http://grafana.:3000/api/health' "${output}"
+      grep -Fq 'HTTP 준비 확인 완료: http://grafana.:3000/api/health' "${output}"
       ;;
     *)
       [[ "$status" != 0 ]] || { echo "실패 조건의 성공 처리: ${scenario}" >&2; exit 1; }

@@ -288,6 +288,7 @@ curl --disable --fail --silent --show-error --max-time 5 http://127.0.0.1:13000/
 - `tests/prometheus-relabel-test.sh`: 운영 Prometheus 설정과 원본 OTel Label의 실제 Scrape
   - 격리된 임시 Network·가짜 Prediction 응답, 학교 자원·실제 서비스 접속 없음
   - `method`·`status`·`uri` 변환·`UNMATCHED`·원본 Label 제거·허용 Meter 확인
+- `tests/observability-readiness-test.sh`: 운영 Compose의 네 도구 기동·HTTP 준비 응답, 학교 서버의 `search .` DNS 설정 재현
 - `tests/runtime-config-sync-test.sh`: Grafana 비밀번호 누락·빈 값의 거절, 기존 운영본·복구본 보존과 후보 파일 삭제
 - Promtool·Collector의 공식 Native Binary 사용 가능: `PROMTOOL_BIN`·`OTELCOL_BIN`, Image와 같은 고정 버전 필요
   - Tempo 설정 검사는 Docker Image 사용
