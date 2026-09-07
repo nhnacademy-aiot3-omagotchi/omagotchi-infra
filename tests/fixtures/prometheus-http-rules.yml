@@ -1,0 +1,60 @@
+rule_files:
+  - ../../observability/prometheus/http-rules.yml
+evaluation_interval: 15s
+tests:
+  - name: 정상·저트래픽·낮은 오류율·서비스별 분리
+    interval: 15s
+    input_series:
+      - series: 'http_server_requests_seconds_count{job="spring-services",service="healthy",uri="/ping",status="200"}'
+        values: '0+5x40'
+      - series: 'http_server_requests_seconds_count{job="spring-services",service="failing",uri="/ping",status="200"}'
+        values: '0+5x40'
+      - series: 'http_server_requests_seconds_count{job="spring-services",service="failing",uri="/ping",status="500"}'
+        values: '0+1x40'
+      - series: 'http_server_requests_seconds_count{job="spring-services",service="low-traffic",uri="/ping",status="500"}'
+        values: '0+0.1x40'
+      - series: 'http_server_requests_seconds_count{job="spring-services",service="low-ratio",uri="/ping",status="200"}'
+        values: '0+100x40'
+      - series: 'http_server_requests_seconds_count{job="spring-services",service="low-ratio",uri="/ping",status="500"}'
+        values: '0+1x40'
+      - series: 'http_server_requests_seconds_count{job="spring-services",service="service-a",uri="/same",status="500"}'
+        values: '0+0.15x40'
+      - series: 'http_server_requests_seconds_count{job="spring-services",service="service-b",uri="/same",status="500"}'
+        values: '0+0.15x40'
+      - series: 'http_server_requests_seconds_count{job="spring-services",service="failing",uri="/actuator/health",status="500"}'
+        values: '0+50x40'
+    promql_expr_test:
+      - expr: omagotchi:http_5xx:symptom5m
+        eval_time: 5m
+        exp_samples:
+          - labels: 'omagotchi:http_5xx:symptom5m{service="healthy",uri="/ping"}'
+            value: 0
+          - labels: 'omagotchi:http_5xx:symptom5m{service="failing",uri="/ping"}'
+            value: 1
+          - labels: 'omagotchi:http_5xx:symptom5m{service="low-traffic",uri="/ping"}'
+            value: 0
+          - labels: 'omagotchi:http_5xx:symptom5m{service="low-ratio",uri="/ping"}'
+            value: 0
+          - labels: 'omagotchi:http_5xx:symptom5m{service="service-a",uri="/same"}'
+            value: 0
+          - labels: 'omagotchi:http_5xx:symptom5m{service="service-b",uri="/same"}'
+            value: 0
+  - name: 수집 부재를 정상 0으로 변환하지 않음
+    interval: 15s
+    promql_expr_test:
+      - expr: omagotchi:http_5xx:symptom5m
+        eval_time: 5m
+        exp_samples: []
+  - name: 재시작으로 Counter가 초기화된 뒤에도 오류 증가량 보존
+    interval: 15s
+    input_series:
+      - series: 'http_server_requests_seconds_count{job="spring-services",service="restart",uri="/ping",status="200"}'
+        values: '0+5x10 0+5x10'
+      - series: 'http_server_requests_seconds_count{job="spring-services",service="restart",uri="/ping",status="500"}'
+        values: '0+1x10 0+1x10'
+    promql_expr_test:
+      - expr: omagotchi:http_5xx:symptom5m
+        eval_time: 5m
+        exp_samples:
+          - labels: 'omagotchi:http_5xx:symptom5m{service="restart",uri="/ping"}'
+            value: 1

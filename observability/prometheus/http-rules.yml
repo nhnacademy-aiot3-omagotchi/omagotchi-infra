@@ -1,0 +1,22 @@
+groups:
+  - name: omagotchi-http
+    interval: 15s
+    rules:
+      - record: omagotchi:http_requests:increase5m
+        expr: |
+          sum by (service, uri) (
+            increase(http_server_requests_seconds_count{job="spring-services",uri!~"/actuator.*"}[5m])
+          )
+      - record: omagotchi:http_5xx:increase5m
+        expr: |
+          sum by (service, uri) (
+            increase(http_server_requests_seconds_count{job="spring-services",status=~"5..",uri!~"/actuator.*"}[5m])
+          )
+          or on (service, uri) (0 * omagotchi:http_requests:increase5m)
+      - record: omagotchi:http_5xx:ratio5m
+        expr: omagotchi:http_5xx:increase5m / clamp_min(omagotchi:http_requests:increase5m, 1)
+      # 정상·저트래픽은 0, 기준 충족은 1. 수집 자체가 없으면 Series 생성 없음.
+      - record: omagotchi:http_5xx:symptom5m
+        expr: |
+          (omagotchi:http_5xx:increase5m >= bool 5)
+          * on (service, uri) (omagotchi:http_5xx:ratio5m >= bool 0.05)
