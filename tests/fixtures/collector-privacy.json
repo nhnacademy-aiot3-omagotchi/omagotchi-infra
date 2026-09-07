@@ -176,6 +176,59 @@
           {"key": "outcome", "value": {"stringValue": "UNKNOWN"}},
           {"key": "exception", "value": {"stringValue": "IOException"}}
         ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "fffffffffffffffc",
+        "parentSpanId": "cccccccccccccccc",
+        "name": "http existing",
+        "kind": 2,
+        "startTimeUnixNano": "1788739200002000000",
+        "endTimeUnixNano": "1788739200003000000",
+        "attributes": [
+          {"key": "http.request.method", "value": {"stringValue":"PATCH"}},
+          {"key": "http.response.status_code", "value": {"intValue":"202"}},
+          {"key": "http.route", "value": {"stringValue":"/kept/{id}"}},
+          {"key": "method", "value": {"stringValue":"GET"}},
+          {"key": "status", "value": {"stringValue":"200"}},
+          {"key": "uri", "value": {"stringValue":"/replaced/{id}"}}
+        ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "fffffffffffffffd",
+        "parentSpanId": "cccccccccccccccc",
+        "name": "http partial client",
+        "kind": 3,
+        "startTimeUnixNano": "1788739200002000000",
+        "endTimeUnixNano": "1788739200003000000",
+        "status": {"code":2},
+        "attributes": [
+          {"key": "client.name", "value": {"stringValue":"example.invalid"}},
+          {"key": "exception", "value": {"stringValue":"IOException"}}
+        ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "fffffffffffffffe",
+        "parentSpanId": "cccccccccccccccc",
+        "name": "http root",
+        "kind": 2,
+        "startTimeUnixNano": "1788739200002000000",
+        "endTimeUnixNano": "1788739200003000000",
+        "attributes": [
+          {"key": "method", "value": {"stringValue":"GET"}},
+          {"key": "uri", "value": {"stringValue":"root"}}
+        ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "ffffffffffffffff",
+        "parentSpanId": "cccccccccccccccc",
+        "name": "http partial server",
+        "kind": 2,
+        "startTimeUnixNano": "1788739200002000000",
+        "endTimeUnixNano": "1788739200003000000",
+        "attributes": [
+          {"key": "method", "value": {"stringValue":"POST"}},
+          {"key": "status", "value": {"boolValue":false}}
+        ]
       }]
     }]
   }]

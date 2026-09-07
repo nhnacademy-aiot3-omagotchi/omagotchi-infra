@@ -86,7 +86,7 @@ jq -se --slurpfile input "${SCRIPT_DIR}/fixtures/collector-privacy.json" '
   | [$input[0].resourceSpans[].scopeSpans[].spans[]] | sort_by(.spanId) as $original
   | ($spans | map({traceId, spanId, parentSpanId, kind, startTimeUnixNano, endTimeUnixNano}))
       == ($original | map({traceId, spanId, parentSpanId, kind, startTimeUnixNano, endTimeUnixNano}))
-    and ($spans | map(.name)) == ["GET", "Internal", "DB", "Redis", "AI", "AI tool", "Messaging", "prediction.inference", "GET", "POST", "GET"]
+    and ($spans | map(.name)) == ["GET", "Internal", "DB", "Redis", "AI", "AI tool", "Messaging", "prediction.inference", "GET", "POST", "GET", "PATCH", "Client", "GET", "POST"]
     and all($spans[]; ((.events // []) | length) == 0 and ((.links // []) | length) == 0
       and (.traceState // "") == "" and (.status.message // "") == "")
     and ($spans[0] | .status.code == 2
@@ -98,12 +98,16 @@ jq -se --slurpfile input "${SCRIPT_DIR}/fixtures/collector-privacy.json" '
     and ($spans[6] | any(.attributes[]; .key == "messaging.operation.type" and .value.stringValue == "process"))
 ' "${TEST_TMP_DIR}/traces.json" >/dev/null
 
-# Spring 서버·클라이언트 속성 변환과 응답 없는 호출의 보존 확인.
+# Spring 속성의 개별 변환·기존 OTel 속성 우선·응답 없는 호출의 보존 확인.
 jq -se '
   [.[].resourceSpans[].scopeSpans[].spans[]] | INDEX(.spanId) as $spans
   | ($spans["cccccccccccccccc"].attributes | from_entries) as $server
   | ($spans["dddddddddddddddd"].attributes | from_entries) as $client
   | ($spans["eeeeeeeeeeeeeeee"].attributes | from_entries) as $failure
+  | ($spans["fffffffffffffffc"].attributes | from_entries) as $existing
+  | ($spans["fffffffffffffffd"].attributes | from_entries) as $partial_client
+  | ($spans["fffffffffffffffe"].attributes | from_entries) as $root
+  | ($spans["ffffffffffffffff"].attributes | from_entries) as $partial_server
   | $server["http.request.method"].stringValue == "GET"
     and ($server["http.response.status_code"].intValue | tonumber) == 200
     and $server["http.route"].stringValue == "/api/v1/rules/{ruleId}"
@@ -115,6 +119,16 @@ jq -se '
     and $failure["error.type"].stringValue == "IOException"
     and $failure["http.response.status_code"] == null
     and $spans["eeeeeeeeeeeeeeee"].status.code == 2
+    and $existing["http.request.method"].stringValue == "PATCH"
+    and ($existing["http.response.status_code"].intValue | tonumber) == 202
+    and $existing["http.route"].stringValue == "/kept/{id}"
+    and $partial_client["server.address"].stringValue == "example.invalid"
+    and $partial_client["error.type"].stringValue == "IOException"
+    and $partial_client["http.request.method"] == null and $partial_client["http.response.status_code"] == null
+    and $root["http.request.method"].stringValue == "GET" and $root["http.route"].stringValue == "/"
+    and $root["http.response.status_code"] == null
+    and $partial_server["http.request.method"].stringValue == "POST"
+    and $partial_server["http.response.status_code"] == null and $partial_server["http.route"] == null
 ' "${TEST_TMP_DIR}/traces.json" >/dev/null
 
 jq -se 'all(.[].resourceSpans[].scopeSpans[]; (.scope.name // "") == "" and (.scope.version // "") == "")' \
