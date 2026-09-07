@@ -160,7 +160,7 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
 - 공개 Bind Mount 권한: 설정·Python 파일 `644`, Mount 디렉터리·Setup Script `755`
   - 전체 Infra 배포에서 이전 `umask 077`로 생성된 관측 파일의 권한 복구
   - Secret·JWT Key·`deploy.env` 권한 변경 없음, Container의 Capability 제한 유지
-  - `--strict.perms=false`: Filebeat 자체 소유권 검사만 생략, 운영체제의 읽기 권한은 별도 필요
+  - `--strict.perms=false`: Filebeat 자체 소유권·쓰기 권한 검사 생략, 운영체제의 읽기 권한은 별도 필요
 - 서버 임시 수정본의 배포 전 확인: `git diff -- observability/filebeat/filebeat.yml`
   - 서버에서 적용한 `.project.value` 수정의 보존·원격 반영 확인 후 작업 트리 정리
   - 다른 변경의 일괄 폐기 금지, 추적 파일 변경이 남으면 자동 배포 중단
