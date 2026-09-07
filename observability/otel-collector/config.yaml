@@ -9,16 +9,6 @@ processors:
     check_interval: 1s
     limit_mib: 256
     spike_limit_mib: 64
-  filter/http-only:
-    error_mode: propagate
-    trace_conditions:
-      # Link 속성의 개별 정제 미지원. 현재 HTTP 부모·자식 추적 범위 밖의 Span 제외.
-      - context: span
-        conditions:
-          - Len(span.links) > 0
-      # 예외 원문이 포함될 수 있는 Event 제외. 원본 예외 확인은 서버 로그 사용.
-      - context: spanevent
-        conditions: ['true']
   transform/sanitize:
     # 정제 실패 시 원문 전달 금지. Debug 로그에도 원본 Context 출력 금지.
     error_mode: propagate
@@ -27,13 +17,37 @@ processors:
         statements:
           - keep_keys(resource.attributes, ["service.name", "service.version", "service.instance.id", "deployment.environment.name"])
           - keep_keys(scope.attributes, [])
-          - keep_keys(span.attributes, ["http.request.method", "http.method", "http.response.status_code", "http.status_code", "http.route", "server.address", "server.port", "error.type"])
+          - set(scope.name, "")
+          - set(scope.version, "")
+          # 원문 대신 호출 종류·대상·결과만 보존. SQL은 앱에서 정제한 요약만 허용.
+          - >-
+            keep_keys(span.attributes, [
+              "http.request.method", "http.method", "http.response.status_code", "http.status_code", "http.route",
+              "server.address", "server.port", "error.type",
+              "db.system.name", "db.system", "db.operation.name", "db.operation", "db.collection.name", "db.query.summary",
+              "messaging.system", "messaging.operation.type", "messaging.operation.name", "messaging.operation", "messaging.destination.name",
+              "gen_ai.system", "gen_ai.provider.name", "gen_ai.operation.name", "gen_ai.request.model", "gen_ai.response.model",
+              "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens", "gen_ai.usage.total_tokens",
+              "spring.ai.kind", "spring.ai.tool.definition.name", "spring.ai.advisor.name"
+            ])
           - set(span.status.message, "")
           - set(span.trace_state, "")
-          # Client Span 이름의 원본 URL·Query 유입 방지. Route는 별도 허용 속성으로 조회.
-          - set(span.name, "HTTP")
+          # 예외·메시지 원문이 들어갈 수 있는 부가 정보만 제거. Span과 Parent 관계는 유지.
+          # 0.160.0의 목록 초기화 계약: ottl.set.allowNil 활성화와 nil 대입.
+          - set(span.events, nil)
+          - set(span.links, nil)
+          # 수동 계측은 합의된 작업 이름만 유지. 그 외 이름은 종류별 안전한 값으로 교체.
+          - set(span.cache["operation"], span.name) where IsMatch(span.name, "^(prediction[.]inference|sensor[.]process|influxdb[.]query|influxdb[.]write|storage[.]upload|storage[.]download|job[.]execute)$")
+          - set(span.name, span.kind.string)
+          - set(span.name, "HTTP") where span.attributes["http.request.method"] != nil or span.attributes["http.method"] != nil or span.attributes["http.route"] != nil
           - set(span.name, span.attributes["http.request.method"]) where IsMatch(span.attributes["http.request.method"], "^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|CONNECT|TRACE)$")
           - set(span.name, span.attributes["http.method"]) where IsMatch(span.attributes["http.method"], "^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|CONNECT|TRACE)$")
+          - set(span.name, "DB") where span.attributes["db.system.name"] != nil or span.attributes["db.system"] != nil
+          - set(span.name, "Redis") where span.attributes["db.system.name"] == "redis" or span.attributes["db.system"] == "redis"
+          - set(span.name, "Messaging") where span.attributes["messaging.system"] != nil
+          - set(span.name, "AI") where span.attributes["gen_ai.operation.name"] != nil or span.attributes["spring.ai.kind"] != nil
+          - set(span.name, "AI tool") where span.attributes["gen_ai.operation.name"] == "execute_tool" or span.attributes["spring.ai.kind"] == "tool_call"
+          - set(span.name, span.cache["operation"]) where span.cache["operation"] != nil
   batch:
     timeout: 1s
     send_batch_size: 512
@@ -73,5 +87,5 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, filter/http-only, transform/sanitize, batch]
+      processors: [memory_limiter, transform/sanitize, batch]
       exporters: [otlp/tempo]

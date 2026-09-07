@@ -27,11 +27,11 @@ else
 fi
 
 if [[ -n "${OTELCOL_BIN:-}" ]]; then
-  "${OTELCOL_BIN}" validate --config observability/otel-collector/config.yaml
+  "${OTELCOL_BIN}" validate --config observability/otel-collector/config.yaml --feature-gates=ottl.set.allowNil
 else
   docker run --rm --network none --read-only \
     --mount "type=bind,src=${INFRA_DIR}/observability/otel-collector/config.yaml,dst=/config.yaml,readonly" \
-    otel/opentelemetry-collector-contrib:0.160.0 validate --config /config.yaml
+    otel/opentelemetry-collector-contrib:0.160.0 validate --config /config.yaml --feature-gates=ottl.set.allowNil
 fi
 
 # 운영 Compose와 같은 단일 프로세스 설정 검사. 실제 기동·저장 검증은 별도.

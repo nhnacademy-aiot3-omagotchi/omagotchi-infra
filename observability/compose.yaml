@@ -167,7 +167,7 @@ services:
     profiles: [tracing]
     mem_limit: 384m
     cpus: 0.5
-    command: [--config=/etc/otelcol-contrib/config.yaml]
+    command: [--config=/etc/otelcol-contrib/config.yaml, --feature-gates=ottl.set.allowNil]
     environment:
       GOMEMLIMIT: 300MiB
     volumes:
