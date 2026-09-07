@@ -30,6 +30,19 @@ def verify_state_aliases(client):
             raise AlertPreparationError(f"알림 상태 Alias의 쓰기 대상 확인 필요: {alias}")
 
 
+def ensure_state_indices(client):
+    """자동배포: 준비된 Alias 재사용, 전체 자원이 없을 때만 최초 생성."""
+    try:
+        verify_state_aliases(client)
+    except AlertPreparationError:
+        # Alias 하나의 404만으로 생성하지 않음. 기존 최초 생성 함수가 모든
+        # Index·Alias·Template·ILM의 부재를 먼저 확인하므로 부분 상태는 중단.
+        setup_state_indices(client)
+        verify_state_aliases(client)
+        return True
+    return False
+
+
 def setup_state_indices(client):
     """전체 자원 부재 확인 후 제품 Mapping·ILM 기반 상태 저장소 생성."""
     # 조회 실패를 부재로 간주하지 않는 경계. 부분 초기화 뒤에도 자동 재실행 금지.

@@ -131,7 +131,8 @@ shellcheck scripts/*.sh tests/*.sh
   <40-character-infra-commit-sha>
 ```
 
-- 선행 조건: 전체 서비스 이미지 발행·Runtime 설정·로그/알림 저장소 최초 준비 완료
+- 선행 조건: 전체 서비스 이미지 발행·Runtime 설정·중앙 로그 저장소 준비 완료
+- 알림 상태 저장소: 전체 부재 시 동일 배포 Lock 안에서 최초 생성, 준비된 경우 재사용
 - 배포 순서: Discovery → Eureka Client → Rule Engine A/B → Ingress·Smoke Test → 관측성
 - Container 명령: `exec -T --interactive=false`, SSH로 전달한 배포 Script의 표준 입력과 분리
   - `-T`만 사용하면 TTY만 해제, 남은 배포 Script를 소비한 뒤 성공 종료하는 현상 가능
@@ -153,13 +154,18 @@ shellcheck scripts/*.sh tests/*.sh
 - 실행 위치: `deploy-infra.sh`의 마지막 단계, 같은 배포 Lock·Revision 사용
   - 업무 서비스와 다른 Compose 프로젝트 유지, `observability/**` 변경도 배포 Trigger에 포함
   - 개별 서비스 배포와 `Sync Runtime Configuration`만 실행한 경우에는 관측 도구 변경 없음
-- 준비 확인: 필수 Secret·Image 다운로드·ES 상태 Alias/Data Stream·Filebeat 연결
-  - 준비 실패 시 실행 중인 관측 도구 유지, ES 최초 초기화의 자동 실행 없음
-  - 최초 준비 절차: [중앙 로그·오류 알림](../observability/README.md)
+- 준비 확인: 필수 Secret·Image 다운로드·로그 Data Stream·알림 상태 자동 준비·Filebeat 연결
+  - `elastalert prepare`: 다섯 쓰기 Alias가 준비됐으면 재사용, 모든 관련 자원이 없으면 최초 생성
+  - 일부 Index·Alias·Template·ILM 존재 또는 조회 실패 시 생성·덮어쓰기 없이 중단
+  - 중앙 로그 저장소 최초 준비는 [중앙 로그·오류 알림](../observability/README.md)의 기존 절차 사용
+  - 준비 실패 시 실행 중인 관측 도구 유지, 생성 도중 실패한 경우 부분 상태의 수동 확인 필요
 - 반영 방식: 여섯 도구의 명시적 재생성, 기존 Named Volume 유지
   - Bind Mount 파일 변경·환경변수·Image 반영, 단순 `up`의 설정 변경 누락 방지
   - Infra 배포 중 짧은 수집 공백 가능, Trace·알림의 무손실 보장 아님
 - 완료 조건: 네 도구의 HTTP 준비 응답과 여섯 Runtime Container의 실행 상태
+  - 점검 시작·완료 Endpoint 출력, DNS·연결·HTTP 오류의 구분
+  - Prometheus의 wget에서 `grafana.`·`otel-collector.`·`tempo.` 사용
+    - 서버 resolver의 `search .` 환경에서 짧은 이름 조회가 실패하는 상황 방지
   - 새 Container의 자동 재시작 0회, 재시작 Loop의 일시적 Running 상태도 실패 처리
   - 전체 서비스 Scrape·Trace 저장·Telegram 수신은 별도 운영 검증
 - 실패 처리: Actions 실패, 이미 배포된 업무 서비스의 자동 Rollback 없음
@@ -250,7 +256,7 @@ bash ./scripts/observability-check.sh
   - 초기화 Container에서 기존 팀 자원·조회 실패 확인 시 생성 중단
   - 수집 Label 반영과 Filebeat 수집 확인의 구분, 평상시 기동은 Infra 자동배포에 포함
   - 운영 알림 도입 시 `OPS_TELEGRAM_BOT_TOKEN`·`OPS_TELEGRAM_CHAT_ID` 추가
-  - 알림 상태 저장소 최초 생성은 수동, 이후 기동·갱신은 Infra 자동배포: [Telegram 운영 절차](../observability/README.md#telegram-오류-알림)
+  - 알림 상태 저장소 최초 생성·기동·갱신은 Infra 자동배포: [Telegram 운영 절차](../observability/README.md#telegram-오류-알림)
 
 ## 운영 확인
 

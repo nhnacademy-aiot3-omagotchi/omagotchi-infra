@@ -66,7 +66,8 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
   - Nginx 설정 검증·Reload 실패 시 배포 실패 처리
 - `scripts/deploy-observability.sh`: 전체 Infra 배포 안에서 관측 도구 재생성·준비 확인
   - Filebeat·ElastAlert2·Prometheus·Grafana·Collector·Tempo, 기존 저장소 유지
-  - 개별 서비스 배포와 최초 ES 초기화는 별도 유지
+  - 알림 상태 저장소 전체 부재 시 자동 생성, 기존 저장소 재사용
+  - 개별 서비스 배포와 중앙 로그 저장소 최초 준비는 별도 유지
 - `scripts/deploy-service.sh`: 단일 서비스 이미지 배포·복구
 - `scripts/rule-engine.sh`: Rule A/B 상태·역할 검증
 - `scripts/smoke-test.sh`: 외부 Route·인증 경계 확인

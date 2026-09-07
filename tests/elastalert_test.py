@@ -14,7 +14,7 @@ from elastalert.config import load_conf
 from elastalert.elastalert import ElastAlerter
 from elastalert.util import EAException
 
-from bootstrap import AlertPreparationError, STATE_INDICES, setup_state_indices, verify_state_aliases
+from bootstrap import AlertPreparationError, POLICY, STATE_INDICES, ensure_state_indices, setup_state_indices, verify_state_aliases
 from runtime import CONFIG, configure_connection, main
 from telegram_alert import OperationsTelegramAlerter
 
@@ -81,6 +81,31 @@ class TelegramAlertTest(unittest.TestCase):
 
 
 class AlertRecoveryTest(unittest.TestCase):
+    def test_deployment_prepares_alert_state_only_after_log_storage_is_ready(self):
+        environment = {"ELASTICSEARCH_URL": "http://fixture:9200", "ES_USERNAME": "fixture",
+                       "ES_PASSWORD": "fixture-password", "OPS_TELEGRAM_BOT_TOKEN": "fixture-token",
+                       "OPS_TELEGRAM_CHAT_ID": "-100123"}
+        for missing_logs in (False, True):
+            with self.subTest(missing_logs=missing_logs), \
+                    patch.dict(os.environ, environment, clear=True), \
+                    patch("sys.argv", ["runtime.py", "prepare"]), \
+                    patch("runtime.elasticsearch_client") as factory, \
+                    patch("runtime.ensure_state_indices") as ensure, \
+                    patch("runtime.os.execvp") as execute:
+                client = factory.return_value
+                client.info.return_value = {"version": {"number": "8.19.3"}}
+                if missing_logs:
+                    client.indices.get_data_stream.side_effect = NotFoundError(404, "missing")
+                    with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stopped:
+                        main()
+                    self.assertEqual(stopped.exception.code, 1)
+                    ensure.assert_not_called()
+                else:
+                    main()
+                    ensure.assert_called_once_with(client)
+                client.indices.get_data_stream.assert_called_once_with(name="logs-omagotchi-prod")
+                execute.assert_not_called()
+
     def test_deployment_check_only_reads_prepared_resources(self):
         # Given: 준비된 저장소와 배포 전 확인 모드.
         environment = {"ELASTICSEARCH_URL": "http://fixture:9200", "ES_USERNAME": "fixture",
@@ -158,6 +183,66 @@ class AlertRecoveryTest(unittest.TestCase):
 
 
 class AlertBootstrapTest(unittest.TestCase):
+    @staticmethod
+    def prepared_alias(name):
+        return {f"{name}-000001": {"aliases": {name: {"is_write_index": True}}}}
+
+    def test_automatic_preparation_reuses_all_write_aliases_without_writes(self):
+        client = MagicMock()
+        client.indices.get_alias.side_effect = self.prepared_alias
+        self.assertFalse(ensure_state_indices(client))
+        self.assertEqual(client.indices.get_alias.call_count, len(STATE_INDICES))
+        client.ilm.put_lifecycle.assert_not_called()
+        client.indices.put_index_template.assert_not_called()
+        client.indices.create.assert_not_called()
+
+    def test_automatic_preparation_creates_absent_storage_and_verifies_it(self):
+        client = MagicMock()
+        client.indices.get_alias.side_effect = [NotFoundError(404, "missing")] + [
+            self.prepared_alias(alias) for alias in STATE_INDICES]
+        client.ilm.get_lifecycle.side_effect = NotFoundError(404, "missing")
+        client.indices.get.return_value = {}
+        client.indices.get_index_template.side_effect = NotFoundError(404, "missing")
+        client.transport.perform_request.side_effect = lambda method, path: {
+            "template": {"settings": {"index": {"lifecycle": {
+                "name": POLICY, "rollover_alias": path.rsplit("/", 1)[1].removesuffix("-000001")}}}}}
+        self.assertTrue(ensure_state_indices(client))
+        client.ilm.put_lifecycle.assert_called_once()
+        self.assertEqual(client.indices.put_index_template.call_count, len(STATE_INDICES))
+        self.assertEqual(client.indices.create.call_count, len(STATE_INDICES))
+        self.assertEqual(client.indices.get_alias.call_count, len(STATE_INDICES) + 1)
+        for call in client.indices.create.call_args_list:
+            alias = call.kwargs["index"].removesuffix("-000001")
+            self.assertEqual(call.kwargs["body"]["aliases"], {alias: {"is_write_index": True}})
+
+    def test_automatic_preparation_blocks_partial_storage_and_read_errors(self):
+        for conflict in ("policy", "index", "template", "forbidden", "connection", "bad-writer"):
+            with self.subTest(conflict=conflict):
+                client = MagicMock()
+                client.indices.get_alias.side_effect = NotFoundError(404, "missing")
+                client.ilm.get_lifecycle.side_effect = NotFoundError(404, "missing")
+                client.indices.get.return_value = {}
+                client.indices.get_index_template.side_effect = NotFoundError(404, "missing")
+                if conflict == "policy":
+                    client.ilm.get_lifecycle.side_effect = None
+                elif conflict in ("index", "bad-writer"):
+                    client.indices.get.return_value = {"existing": {}}
+                    if conflict == "bad-writer":
+                        client.indices.get_alias.side_effect = None
+                        client.indices.get_alias.return_value = {
+                            "existing": {"aliases": {next(iter(STATE_INDICES)): {}}}}
+                elif conflict == "template":
+                    client.indices.get_index_template.side_effect = None
+                else:
+                    client.indices.get_alias.side_effect = TransportError(
+                        403 if conflict == "forbidden" else 503, "private-connection-info")
+                with self.assertRaises((AlertPreparationError, TransportError)):
+                    ensure_state_indices(client)
+                client.ilm.put_lifecycle.assert_not_called()
+                client.indices.put_index_template.assert_not_called()
+                client.indices.create.assert_not_called()
+                client.indices.delete.assert_not_called()
+
     def test_existing_resource_or_failed_read_prevents_all_writes(self):
         # Given: 모든 조회 완료 전의 기존 자원·권한 오류 발견.
         for conflict in ("policy", "index", "template", "forbidden"):

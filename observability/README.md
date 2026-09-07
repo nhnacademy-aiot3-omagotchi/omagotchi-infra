@@ -104,7 +104,8 @@ set -e
 ## 최초 초기화·수집 시작
 
 - 아래 명령은 최초 준비용 수동 절차, 평상시 기동·설정 반영은 [Infra 자동배포](../docs/operations.md#관측성-자동배포) 사용
-- 자동배포의 초기화 실행 없음, 로그 Data Stream·알림 상태 Alias 누락 시 실패 처리
+- 이 절차는 중앙 로그 저장소의 최초 준비용. 알림 상태 저장소는 아래 Telegram 자동배포 절차에서 준비
+- 자동배포 시 로그 Data Stream 누락은 실패, 알림 상태 저장소 전체 부재는 자동 생성
 - 실행 조건: 위 조회 결과의 검토 완료·팀 자원 부재·보존 정책 동의
 - 자원 생성은 Filebeat 내장 `setup`에 위임, 사전 확인만 Shell Script에서 수행
 - `scripts/observability-setup.sh`: 내장 `setup` 실행 전 연결·인증 및 기존 팀 자원 확인
@@ -206,35 +207,34 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
 - 제품 기본 이미지의 자동 Index 초기화 미사용
   - `runtime.py`: 접속 환경변수 변환·실행 모드 분리
     - `check`: 배포 전 연결·상태 Alias·로그 Data Stream의 읽기 전용 확인, 초기화·알림 전송 없음
+    - `prepare`: 자동배포에서 로그 Data Stream 확인 후 알림 상태 저장소 재사용 또는 최초 생성
   - `bootstrap.py`: 기존 팀 자원 확인·제품 Mapping과 ILM 적용
   - `telegram_alert.py`: 허용 필드의 평문 전송·Timeout·인증 정보 보호
   - 조회·Cursor·재알림·재시도: ElastAlert2 기본 기능 사용
 
-### 최초 적용
+### 최초 적용·자동배포
 
 - 실행 위치: 변경이 반영된 서버의 Infra 디렉터리
 - 선행 조건: `PROD_ENV` 동기화·중앙 오류 검색 확인·운영 그룹 준비
-- 최초 생성 전 확인: 아래 이름의 기존 Index·Alias·Template·ILM 부재
+- Infra `main` 배포가 `elastalert prepare`를 실행, 서버에서 초기화 명령을 별도로 실행할 필요 없음
+- 다섯 상태 Alias에 쓰기 대상이 하나씩 있으면 기존 저장소 재사용
+- Alias가 준비되지 않았다면 아래 자원의 전체 부재를 확인한 뒤 최초 생성
   - `elastalert-omagotchi-status`와 `_status`·`_silence`·`_error`·`_past`의 다섯 Alias
   - 각 Alias 이름의 Template·`<Alias>-000001` 형식의 실제 Index
   - ILM `omagotchi-alert-state`
-- 기존 자원·403·연결 실패 시 쓰기 시작 전 중단
+- 일부 기존 자원·403·연결 실패 시 쓰기 시작 전 중단
   - 부분 생성 후 자동 삭제·덮어쓰기·재시도 금지, 현재 자원 확인 후 복구 판단
   - 다른 팀 Template과의 우선순위 충돌 시 임의 증대 금지
-  - 초기화의 단독 실행, 동시 실행의 원자적 잠금 보장 없음
+  - 자동배포에서는 Infra 공용 Lock 안에서 실행, 독립 수동 초기화와의 동시 실행 금지
 
 ```bash
-bash -c '
-set -e
-./scripts/observability-compose.sh --profile alerts config --quiet
-./scripts/observability-compose.sh run --rm --no-deps elastalert-setup
-./scripts/observability-compose.sh up -d --no-deps elastalert
-./scripts/observability-compose.sh ps
-./scripts/observability-compose.sh logs --tail=50 --no-color elastalert
-'
+# 필요할 때 현재 저장소만 읽기 전용 확인. 최초 생성·재배포 명령이 아님.
+./scripts/observability-compose.sh run --rm -T --no-deps elastalert check
 ```
 
 - 최초 상태 생성에는 Telegram 전송 없음
+- 기존 `elastalert-setup`은 독립 최초 설정용으로 유지, 자원이 하나라도 있으면 실패하는 명령
+- 이전에 수동 초기화한 환경도 정상 쓰기 Alias를 확인하고 그대로 재사용
 - 알림 Container 시작·재시작의 조회 범위
   - 최초 시작 또는 마지막 조회 시각이 5분 이상 지난 경우: 최근 5분부터 조회
   - 마지막 조회 시각이 5분 미만 지난 경우: 저장된 시각부터 조회 재개
