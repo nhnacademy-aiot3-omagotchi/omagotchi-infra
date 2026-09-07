@@ -44,7 +44,10 @@ deploy_example_keys_file="${TEST_TMP_DIR}/deploy-example-keys"
 compose_keys_file="${TEST_TMP_DIR}/compose-keys"
 owned_compose_keys_file="${TEST_TMP_DIR}/owned-compose-keys"
 
-read_array_keys runtime_keys | LC_ALL=C sort >"${runtime_keys_file}"
+{
+  read_array_keys runtime_keys
+  read_array_keys optional_runtime_keys
+} | LC_ALL=C sort >"${runtime_keys_file}"
 # $$는 Compose 치환이 아닌 Container Shell의 변수 참조. 외부 Env 소유권에서 제외.
 sed 's/\$\$//g' "${INFRA_DIR}/observability/compose.yaml" \
   | grep -oE '\$\{[A-Z][A-Z0-9_]*' \
@@ -78,12 +81,17 @@ assert_same_keys "${owned_compose_keys_file}" "${compose_keys_file}" \
   "Compose 환경변수와 환경파일 소유권 목록이 일치하지 않습니다."
 
 if grep -nE '\$\{[A-Z][A-Z0-9_]*(:-|-)' "${INFRA_DIR}/compose.yaml" \
+  | grep -vE '\$\{(TRACING_EXPORT_ENABLED|TRACING_SAMPLING_PROBABILITY):-' \
   >"${TEST_TMP_DIR}/compose-defaults"; then
   cat "${TEST_TMP_DIR}/compose-defaults" >&2
   fail "운영 Compose 환경변수에 암묵적 기본값이 남아 있습니다."
 fi
 
 while IFS= read -r expression; do
+  # 기존 배포와 호환되는 관측 선택값만 기본값 허용.
+  if [[ "${expression}" =~ ^\$\{(TRACING_EXPORT_ENABLED|TRACING_SAMPLING_PROBABILITY):-.*\}$ ]]; then
+    continue
+  fi
   if [[ ! "${expression}" =~ ^\$\{[A-Z][A-Z0-9_]*(:\?|\?).*\}$ ]]; then
     fail "누락 시 실패하지 않는 Compose 환경변수 표현식이 있습니다: ${expression}"
   fi
@@ -96,10 +104,19 @@ cp "${INFRA_DIR}/deploy.env.example" "${deploy_env}"
 cp "${INFRA_DIR}/.env.prod.example" "${full_secret_env}"
 
 # 통합 예시와 무관하게 관측 설정 없이 가능한 앱 Compose 실행.
-sed -E '/^(ELASTICSEARCH_|OPS_TELEGRAM_|GRAFANA_ADMIN_PASSWORD=)/d' "${full_secret_env}" >"${candidate_env}"
+sed -E '/^(ELASTICSEARCH_|OPS_TELEGRAM_|GRAFANA_ADMIN_PASSWORD=|TRACING_)/d' "${full_secret_env}" >"${candidate_env}"
 if ! DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${candidate_env}" \
   "${INFRA_DIR}/scripts/compose.sh" config --quiet; then
   fail "관측 설정 누락으로 앱 Compose 실행이 차단되었습니다."
+fi
+
+# 호출 Shell의 값이 선택적 관측 설정의 기본값·운영 파일을 덮어쓰지 않는지 확인.
+if ! TRACING_EXPORT_ENABLED=true TRACING_SAMPLING_PROBABILITY=1 \
+  DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${candidate_env}" \
+  "${INFRA_DIR}/scripts/compose.sh" config --format json \
+  | jq -e '.services["gateway-service"].environment
+      | .TRACING_EXPORT_ENABLED == "false" and .TRACING_SAMPLING_PROBABILITY == "0.1"' >/dev/null; then
+  fail "호출 Shell의 관측 설정이 운영 설정에 혼입되었습니다."
 fi
 
 # Runtime 설정과 배포 상태의 누락·책임 혼합 차단.
