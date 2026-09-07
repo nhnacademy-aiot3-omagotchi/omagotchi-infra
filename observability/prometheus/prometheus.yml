@@ -33,7 +33,7 @@ scrape_configs:
         regex: '(http_server_requests_seconds_(count|sum|bucket)|jvm_.*|process_.*|system_cpu_.*)'
         action: keep
 
-  # Prediction의 Metric 이름·Label 계약 확정 전에는 HTTP 집계에 합산하지 않음.
+  # FastAPI의 OTel HTTP Histogram을 Spring과 같은 집계 이름·Label로 정규화.
   - job_name: prediction-service
     metrics_path: /metrics
     static_configs:
@@ -41,8 +41,23 @@ scrape_configs:
         labels: {service: prediction-service}
     metric_relabel_configs:
       - source_labels: [__name__]
-        regex: 'process_.*'
+        regex: '(http_server_requests_seconds_(count|sum|bucket)|process_.*)'
         action: keep
+      - source_labels: [http_request_method]
+        regex: '(.+)'
+        target_label: method
+      - source_labels: [http_response_status_code]
+        regex: '(.+)'
+        target_label: status
+      - source_labels: [http_route]
+        regex: '(.+)'
+        target_label: uri
+      - source_labels: [__name__, uri]
+        regex: 'http_server_requests_seconds_(count|sum|bucket);'
+        target_label: uri
+        replacement: UNMATCHED
+      - regex: 'http_request_method|http_response_status_code|http_route'
+        action: labeldrop
 
   - job_name: observability
     static_configs:

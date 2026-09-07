@@ -110,12 +110,20 @@ runtime_keys=(
   LEARNING_PREDICTION_PASSWORD
 )
 
+# 단계별 관측 활성화용 선택 설정, 기존 prod.env와의 호환성 유지.
+optional_runtime_keys=(
+  TRACING_EXPORT_ENABLED
+  TRACING_SAMPLING_PROBABILITY
+)
+
 for key in "${runtime_keys[@]}"; do
   if ! grep -Eq "^[[:space:]]*${key}=" "${SECRET_ENV_FILE}"; then
     echo "prod.env에 필수 Runtime 설정이 없습니다: ${key}" >&2
     exit 1
   fi
+done
 
+for key in "${runtime_keys[@]}" "${optional_runtime_keys[@]}"; do
   if grep -Eq "^[[:space:]]*${key}=" "${DEPLOY_ENV_FILE}"; then
     echo "${key}는 deploy.env가 아니라 prod.env에만 두어야 합니다." >&2
     exit 1
@@ -148,7 +156,7 @@ for key in "${deploy_keys[@]}"; do
 done
 
 # Compose 환경변수 우선순위에 따른 호출 셸 export 값의 혼입 차단.
-unset "${runtime_keys[@]}" "${deploy_keys[@]}"
+unset "${runtime_keys[@]}" "${optional_runtime_keys[@]}" "${deploy_keys[@]}"
 
 cd "${INFRA_DIR}"
 

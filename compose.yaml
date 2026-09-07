@@ -8,6 +8,12 @@ x-default-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+# 앱별 계측의 공통 전송 설정, 비활성 상태에서도 Request ID·Trace 전파 유지
+x-tracing-environment: &tracing-environment
+  TRACING_EXPORT_ENABLED: "${TRACING_EXPORT_ENABLED:-false}"
+  TRACING_SAMPLING_PROBABILITY: "${TRACING_SAMPLING_PROBABILITY:-0.1}"
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://omagotchi-otel-collector:4318/v1/traces"
+
 services:
   discovery-service:
     labels:
@@ -15,6 +21,7 @@ services:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-discovery-service:${DISCOVERY_IMAGE_TAG:?DISCOVERY_IMAGE_TAG is required}
     logging: *default-logging
     environment:
+      <<: *tracing-environment
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8761"
       SERVICE_VERSION: "${DISCOVERY_IMAGE_TAG:?DISCOVERY_IMAGE_TAG is required}"
@@ -41,6 +48,7 @@ services:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-identity-service:${IDENTITY_IMAGE_TAG:?IDENTITY_IMAGE_TAG is required}
     logging: *default-logging
     environment:
+      <<: *tracing-environment
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
       SERVICE_VERSION: "${IDENTITY_IMAGE_TAG:?IDENTITY_IMAGE_TAG is required}"
@@ -111,6 +119,7 @@ services:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-learning-service:${LEARNING_IMAGE_TAG:?LEARNING_IMAGE_TAG is required}
     logging: *default-logging
     environment:
+      <<: *tracing-environment
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
       SERVICE_VERSION: "${LEARNING_IMAGE_TAG:?LEARNING_IMAGE_TAG is required}"
@@ -221,6 +230,7 @@ services:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-prediction-service:${PREDICTION_IMAGE_TAG:?PREDICTION_IMAGE_TAG is required}
     logging: *default-logging
     environment:
+      <<: *tracing-environment
       SERVICE_VERSION: "${PREDICTION_IMAGE_TAG:?PREDICTION_IMAGE_TAG is required}"
       SERVICE_ENVIRONMENT: "prod"
       SERVICE_NODE_NAME: "prediction-service"
@@ -250,6 +260,7 @@ services:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-gateway-service:${GATEWAY_IMAGE_TAG:?GATEWAY_IMAGE_TAG is required}
     logging: *default-logging
     environment:
+      <<: *tracing-environment
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
       SERVICE_VERSION: "${GATEWAY_IMAGE_TAG:?GATEWAY_IMAGE_TAG is required}"
@@ -292,6 +303,7 @@ services:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-rule-service:${RULE_IMAGE_TAG:?RULE_IMAGE_TAG is required}
     logging: *default-logging
     environment:
+      <<: *tracing-environment
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
       SERVICE_VERSION: "${RULE_IMAGE_TAG:?RULE_IMAGE_TAG is required}"
@@ -350,6 +362,7 @@ services:
     image: ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-rule-service:${RULE_IMAGE_TAG:?RULE_IMAGE_TAG is required}
     logging: *default-logging
     environment:
+      <<: *tracing-environment
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
       SERVICE_VERSION: "${RULE_IMAGE_TAG:?RULE_IMAGE_TAG is required}"
@@ -409,6 +422,7 @@ services:
     container_name: omagotchi-frontend
     logging: *default-logging
     environment:
+      <<: *tracing-environment
       SPRING_PROFILES_ACTIVE: "prod"
       SERVER_PORT: "8080"
       SERVICE_VERSION: "${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG is required}"

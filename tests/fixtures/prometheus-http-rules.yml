@@ -7,6 +7,8 @@ tests:
     input_series:
       - series: 'http_server_requests_seconds_count{job="spring-services",service="healthy",uri="/ping",status="200"}'
         values: '0+5x40'
+      - series: 'http_server_requests_seconds_count{job="prediction-service",service="prediction-service",uri="/api/v1/predictions/study-time",status="500"}'
+        values: '0+1x40'
       - series: 'http_server_requests_seconds_count{job="spring-services",service="failing",uri="/ping",status="200"}'
         values: '0+5x40'
       - series: 'http_server_requests_seconds_count{job="spring-services",service="failing",uri="/ping",status="500"}'
@@ -27,6 +29,8 @@ tests:
       - expr: omagotchi:http_5xx:symptom5m
         eval_time: 5m
         exp_samples:
+          - labels: 'omagotchi:http_5xx:symptom5m{service="prediction-service",uri="/api/v1/predictions/study-time"}'
+            value: 1
           - labels: 'omagotchi:http_5xx:symptom5m{service="healthy",uri="/ping"}'
             value: 0
           - labels: 'omagotchi:http_5xx:symptom5m{service="failing",uri="/ping"}'

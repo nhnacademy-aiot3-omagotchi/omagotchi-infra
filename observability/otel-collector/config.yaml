@@ -13,6 +13,28 @@ processors:
     # 정제 실패 시 원문 전달 금지. Debug 로그에도 원본 Context 출력 금지.
     error_mode: propagate
     trace_statements:
+      # Spring HTTP 속성의 개별 변환 후 공통 정제. 일부 속성이 없어도 나머지 변환 유지, 기존 OTel 속성 우선.
+      - context: span
+        conditions:
+          - span.kind == SPAN_KIND_SERVER or span.kind == SPAN_KIND_CLIENT
+        statements:
+          - set(span.attributes["http.request.method"], span.attributes["method"]) where span.attributes["http.request.method"] == nil and IsString(span.attributes["method"])
+          # 응답을 받지 못한 IO_ERROR·CLIENT_ERROR·UNKNOWN의 숫자 변환 제외.
+          - >-
+            set(span.attributes["http.response.status_code"], Int(span.attributes["status"]))
+            where span.attributes["http.response.status_code"] == nil and IsString(span.attributes["status"]) and IsMatch(span.attributes["status"], "^[1-5][0-9][0-9]$")
+          # 서버의 매핑 경로만 보존. 원본 값·Query를 포함할 수 있는 Client uri는 제외.
+          - >-
+            set(span.attributes["http.route"], span.attributes["uri"])
+            where span.kind == SPAN_KIND_SERVER and span.attributes["http.route"] == nil and IsString(span.attributes["uri"]) and IsMatch(span.attributes["uri"], "^/[^?#]*$")
+          - set(span.attributes["http.route"], "/") where span.kind == SPAN_KIND_SERVER and span.attributes["http.route"] == nil and span.attributes["uri"] == "root"
+          - >-
+            set(span.attributes["server.address"], span.attributes["client.name"])
+            where span.kind == SPAN_KIND_CLIENT and span.attributes["server.address"] == nil
+            and IsString(span.attributes["client.name"]) and span.attributes["client.name"] != "none"
+          - >-
+            set(span.attributes["error.type"], span.attributes["exception"])
+            where span.attributes["error.type"] == nil and IsString(span.attributes["exception"]) and span.attributes["exception"] != "none"
       - context: span
         statements:
           - keep_keys(resource.attributes, ["service.name", "service.version", "service.instance.id", "deployment.environment.name"])

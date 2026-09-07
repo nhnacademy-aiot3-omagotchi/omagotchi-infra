@@ -1,0 +1,9 @@
+# TYPE http_server_requests_seconds histogram
+http_server_requests_seconds_count{http_request_method="POST",http_response_status_code="200",http_route="/predict"} 2
+http_server_requests_seconds_sum{http_request_method="POST",http_response_status_code="200",http_route="/predict"} 0.4
+http_server_requests_seconds_bucket{http_request_method="POST",http_response_status_code="200",http_route="/predict",le="+Inf"} 2
+http_server_requests_seconds_count{http_request_method="GET",http_response_status_code="404"} 1
+http_server_requests_seconds_sum{http_request_method="GET",http_response_status_code="404"} 0.01
+http_server_requests_seconds_bucket{http_request_method="GET",http_response_status_code="404",le="+Inf"} 1
+process_cpu_seconds_total 3
+private_business_total 9

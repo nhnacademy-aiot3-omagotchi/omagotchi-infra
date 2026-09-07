@@ -1,16 +1,16 @@
 # 메트릭·주요 Span 수집 운영
 
-> 상태: Infra 구현·로컬 검증, 서비스 계측 연결·운영 검증 전 · 기준일: 2026-09-07
+> 상태: Infra·서비스 연결 구현, 운영 검증 전 · 기준일: 2026-09-07
 
 ## 이번 변경과 남은 작업
 
-- 이번 변경: Prometheus·Grafana·Collector·Tempo 설정, 주요 Span 수집·정제, 조회·증상 알림의 기본 구성
-- 변경 제외: 서비스 의존성·계측·Export·보안 설정·업무 로직, Broker Context 전파, 무중단 배포
+- 이번 변경: 기존 수집 도구와 서비스 Endpoint·Exporter 연결, 주요 호출 구간 계측
+- 변경 제외: 업무 처리·재시도·메시지 Payload 재설계, 무중단 배포
 - 현재 서비스 상태
-  - Spring: Prometheus Registry·OTLP Exporter 미추가, 수집 Endpoint·Export 설정 미완료
-  - Prediction: `/metrics` 계약·Prometheus Client·OTLP Exporter 미추가
+  - Spring 6개 서비스: Prometheus Registry·OTLP Exporter·내부 Endpoint·보안 설정 추가
+  - Prediction: 기존 FastAPI 계측의 Prometheus Export·OTLP Export·추론 Span 추가
   - 기존 Request ID·W3C 전파와 실제 메트릭·Span 저장의 구분
-- 순서: 이번 Infra PR의 dev·main 반영 → Infra 도구 확인 → 서비스 계측·Export 묶음 작업 → 실제 Dashboard·Waterfall 확인
+- 순서: Infra 도구 확인 → 서비스별 배포·메트릭 조회 → Trace Export 활성화 → 실제 Waterfall 확인
 - 완료 판정: 도구 기동만으로 완료 처리 금지, 아래 서비스 연결·검증 포함
 
 ## 구성과 파일
@@ -91,10 +91,12 @@
 
 ## Dashboard·알림 해석
 
-- Dashboard 상태: 서비스 계측 연결 전 초안
+- Dashboard 상태: Spring·Prediction의 공통 HTTP 집계 구성, 운영 화면 검증 전
   - 서비스·경로 필터, HTTP p95는 Histogram 노출 이후 표시
   - JVM·CPU·Endpoint 상태에는 서비스 필터만 적용
-  - Prediction HTTP Metric 이름·Label 확정 전 Spring HTTP 집계에 합산하지 않음
+  - Prediction: OTel HTTP Histogram을 `http_server_requests_seconds_*`로 노출, 수집 시 Label을 `method`·`status`·`uri`로 통일
+  - Prediction의 JVM·Spring CPU Panel 제외, HTTP Panel·증상 알림에는 포함
+  - Histogram: 5ms~60s의 고정 Bucket 13개, 모든 Meter의 자동 Histogram 활성화 제외
   - 수집 없음과 정상 `0`의 구분, 빈 그래프의 정상 판정 금지
 - HTTP 집계: 서비스별 요청, 내부 서비스 호출 포함
   - 여러 서비스의 건수를 합쳐 외부 사용자 요청 수로 표현 금지
@@ -128,8 +130,16 @@
 | AI 모델·도구 | 모델·작업·도구 이름·토큰 사용량 | `AI`·`AI tool` |
 | 수동 업무 계측 | 합의된 고정 작업 이름 | 아래 허용 이름 |
 
+- Spring HTTP 속성의 표준 Key 변환 후 허용 목록 적용
+  - `method` → `http.request.method`, 숫자 `status` → 정수 `http.response.status_code`
+  - 서버 `uri`의 매핑 경로 → `http.route`, `root` → `/`, 미확정 경로의 생략
+  - 클라이언트 `client.name` → `server.address`, 예외 클래스 `exception` → `error.type`
+  - 클라이언트 `uri`의 원본 경로·Query 포함 가능성에 따른 미저장, 대상 호스트·Method·시간으로 호출 구분
+  - `IO_ERROR`·`CLIENT_ERROR`·`UNKNOWN`의 상태 코드 변환 제외, Span·오류 상태 보존
+  - 이미 존재하는 OTel 표준 속성 우선, 서비스별 변환 코드 추가 없음
 - 수동 Span 이름: `prediction.inference`, `sensor.process`, `influxdb.query`, `influxdb.write`, `storage.upload`, `storage.download`, `job.execute`
-  - 후속 서비스 작업의 이름 계약, 해당 Span의 생성·Export 구현 완료를 뜻하지 않음
+  - 이번 구현: `prediction.inference`, `influxdb.query`, `influxdb.write`, `storage.upload`, `storage.download`
+  - `sensor.process`·`job.execute`: 허용 이름만 예약, 모든 센서 처리·Scheduler 계측 완료를 뜻하지 않음
   - 사용자·장치·파일·작업 ID를 이름에 붙이지 않는 방식
 - 제거: 원본 URL·Query·Header·SQL 본문·바인딩 값·Redis Key/Value·AI 대화·도구 입력/결과·메시지 본문·임의 속성
   - Scope 속성뿐 아니라 이름·버전도 제거
@@ -137,7 +147,8 @@
 - Link와 Parent 관계의 구분
   - Link 목록만 초기화, Link를 가진 Span과 Parent Span ID는 보존
   - 별도 Trace·배치 메시지를 연결하는 Link 관계의 조회 불가
-  - 후속 RabbitMQ 작업에서 실제 Parent 전파·재시도 검증, Link가 필수인 흐름은 별도 정책 검토
+  - RabbitTemplate·Listener의 표준 Header 전파 활성화, 실제 Broker 발행·소비의 운영 검증 필요
+  - Rule 자체 Retry Worker·DLQ까지 최초 Trace 유지 보장 없음, 기존 업무 Correlation 유지
 - 쿼리 조회의 제한
   - `db.query.summary`: 애플리케이션에서 값 제거를 마친 요약만 전달
   - 원본 `db.query.text`·`db.statement`·`jdbc.query[*]` 미저장
@@ -201,31 +212,53 @@ curl --disable --fail --silent --show-error --max-time 5 http://127.0.0.1:13000/
 
 ### 3. 서비스 연결
 
-- 작업 시점: 이번 Infra PR의 main 반영 후, 서비스 저장소별 독립 PR의 한 작업 묶음
+- 서비스 저장소별 독립 PR, Infra와 서비스 배포의 분리
 - 범위: 기존 HTTP + JDBC·Redis·AI 우선, RabbitMQ·센서 처리의 별도 검증 단위
-  - Identity·Learning: JDBC 쿼리 계측, 실제 SQL 값과 정제된 요약의 구분
-  - Redis 사용 서비스: 기존 Boot·Lettuce 자동 구성 활용 여부 확인
+  - Identity·Learning: Datasource Micrometer `2.2.1`의 QUERY만 계측, SQL 본문·Parameter 제외
+  - Frontend·Learning Redis: 기존 Boot·Lettuce 자동 구성 재사용, 명령 인자 수집 비활성화 기본값 유지
   - Learning: 직접 생성하는 AI 모델·ChatClient의 ObservationRegistry 연결, 대화·도구 원문 미수집
   - Rule·Learning: RabbitTemplate·Listener 계측과 Header 전파, Retry·DLQ 경계 확인
-  - InfluxDB·MinIO·외부 API: SDK 계측 여부 확인 후 필요한 호출 경계만 보완, 같은 호출의 중복 Span 방지
+  - InfluxDB: Rule 적재·Learning 조회의 실제 SDK 호출만 수동 계측
+  - MinIO: Learning 업로드·다운로드 Stream 열기만 계측, 다운로드 전체 본문 소비 시간과 구분
   - Prediction: 기존 Provider에 Export 연결, 실제 추론 구간만 작은 수동 Span 추가
   - 기존 Rule 업무 로직·`pipeline.correlation.id`·Message Payload 형식 변경 제외
 - Spring: 기존 Micrometer Tracing 유지, Registry·OTLP Exporter의 Boot BOM 관리 버전 사용
   - `/actuator/prometheus`의 내부 노출·Spring Security 허용, 외부 Nginx/Gateway 차단 확인
+    - 수집 경계: 앱 Host Port 미노출·`omagotchi-net`의 Prometheus 직접 조회
+    - 외부 경계: Nginx의 `/actuator`·`/actuator/**` 차단, Gateway 관리 경로 미라우팅
+    - Prediction `/metrics`: 외부 Route 미등록·Host Port 미노출
+    - 제한: 같은 Host의 관리자·Docker 제어 권한 보유자에 대한 격리 보장 없음
+    - 배포 후 확인: 내부 Target `UP`과 외부 관리 경로 차단의 별도 확인
   - HTTP Histogram·Route Label·서비스명 확인, 고유 사용자·Request ID Label 금지
   - OTLP/HTTP Endpoint·제한된 비동기 Export·Timeout·Sampling 설정
-  - 운영 Export의 초기 Head Sampling 제안 `0.1`, 새 Trace 시작점의 결정과 하위 호출의 결정 공유
+  - 운영 초기 Head Sampling `0.1`, 새 Trace 시작점의 결정과 하위 호출의 결정 공유
     - 통제된 소량 종단 검증에서만 일시 `1.0`, 검증 후 운영값 복구
     - 고빈도 센서에서 시작하는 Trace는 발생량 확인 후 더 낮은 Sampling 비율 검토
     - 중간 서비스에서 독립적으로 재추출하거나 DB·메시지 Span만 삭제하는 방식 제외
     - 모든 오류 Trace의 보존 보장 없음, 기존 오류 로그·Telegram 전송은 Trace Sampling과 별개
-    - Sampling은 후속 서비스 연결 작업, 이번 Infra 설정만으로 앱 Sampling 변경 없음
-  - URL·예외·Baggage 원문 미전송 및 Collector 중지 중 업무 정상 확인
+    - 유효한 외부 sampled Header의 부모 결정도 유지, 전체 유입량의 정확한 10% 상한 아님
+  - Spring `TraceAttributeFilter`: 고카디널리티 속성 중 안전한 쿼리 요약·오류 타입·토큰 수만 유지
+    - 저카디널리티 속성과 예외 Event까지 제거하는 기능 아님, 최종 원문 정제는 Collector 책임
+  - Learning: 직접 만든 AI 모델·ChatClient에 공통 Registry 주입, 기존 전용 Executor에 Context 복원 추가
+  - Rabbit: 기본 Convention의 센서 Routing Key 제외, 고정 Exchange·Queue와 발행/소비 종류만 사용
+  - Discovery: Eureka·Actuator의 반복 HTTP 계측 제외, JVM 메트릭 유지
 - Prediction: 기존 OTel Provider 재사용, 중복 계측·Provider 추가 금지
-  - `/metrics` 이름·단위·Label 결정 후 Scrape Allowlist·Dashboard·Alert 수정
-  - SSE 전체 연결 시간과 일반 응답 시간의 구분
+  - FastAPI의 HTTP 시간만 Prometheus에 노출, Route·Method·상태 외 속성 제외
+  - `/health`·`/metrics`의 접근 Event·Trace·HTTP 집계 제외
+  - 추론 Span의 Feature 원본 미첨부, SDK의 URL·예외 최종 정제는 Collector 책임
 - 순서: Gateway·Rule 한 경로 → 나머지 Spring 서비스 → Prediction
-- 이 단계의 정확한 Property·보안 코드는 각 서비스 변경에서 검증, 이번 Infra 완료에 포함하지 않음
+- `PROD_ENV`의 선택 설정과 적용 순서
+  - `TRACING_EXPORT_ENABLED=false`: 기본값, 메트릭 수집과 W3C 전파는 유지
+  - `TRACING_SAMPLING_PROBABILITY=0.1`: 운영 기본값, 환경 설정 동기화 후 서비스 재생성 시 적용
+  - `tracing` Profile의 Collector·Tempo 준비 → 서비스 이미지 배포 → 소량 검증 시 Export 활성화
+  - Export Endpoint: Compose에서 `http://omagotchi-otel-collector:4318/v1/traces` 공통 주입
+    - 앱 YAML의 `localhost:4318`은 로컬 기본값, 운영 Container의 전송 주소가 아님
+    - Compose 밖에서 운영 실행 시 실제 Collector 주소의 별도 주입 필수
+  - Collector 미준비 상태에서 무조건 Export 활성화 금지
+- 앱 전송 제한
+  - Spring: Queue 1,024 Span·Batch 128개·주기 5초·HTTP 연결 1초/응답 2초·Exporter 대기 3초
+  - Prediction: Queue 256 Span·Batch 128개·주기 5초·HTTP Timeout 2초
+  - 공통: Span 속성 32개·문자열 256자·Event 8개, Queue 초과 시 유실 가능
 
 ### 4. 완료 확인·중지
 
@@ -246,7 +279,12 @@ curl --disable --fail --silent --show-error --max-time 5 http://127.0.0.1:13000/
   - Tempo `-config.verify=true`: 고정 버전의 설정 해석·유효성 검사, Container 기동·저장 검증과 구분
 - `tests/collector-privacy-test.sh`: HTTP·미분류 Internal·DB·Redis·AI·Tool·Messaging·수동 Span 입력
   - Span 개수·ID·Kind·시간·Parent 관계 보존, 종류별 이름·허용 속성 확인
+  - Spring 서버·클라이언트 속성의 개별 변환, 누락·잘못된 타입의 다른 속성과 무관한 정상 속성 보존
+  - 기존 OTel 속성 우선, 응답 없는 호출의 Span 보존
   - Scope 이름·버전, URL·SQL·대화·메시지·Event·Link의 가짜 민감정보 제거
+- `tests/prometheus-relabel-test.sh`: 운영 Prometheus 설정과 원본 OTel Label의 실제 Scrape
+  - 격리된 임시 Network·가짜 Prediction 응답, 학교 자원·실제 서비스 접속 없음
+  - `method`·`status`·`uri` 변환·`UNMATCHED`·원본 Label 제거·허용 Meter 확인
 - `tests/runtime-config-sync-test.sh`: Grafana 비밀번호 누락·빈 값의 거절, 기존 운영본·복구본 보존과 후보 파일 삭제
 - Promtool·Collector의 공식 Native Binary 사용 가능: `PROMTOOL_BIN`·`OTELCOL_BIN`, Image와 같은 고정 버전 필요
   - Tempo 설정 검사는 Docker Image 사용
@@ -257,7 +295,8 @@ curl --disable --fail --silent --show-error --max-time 5 http://127.0.0.1:13000/
   - 합성 HTTP Span의 Collector → Tempo 저장·조회, 가짜 민감정보 제거·부모/자식 관계 보존
   - Tempo 재시작 후 같은 Trace 조회
   - 별도 프로젝트·새 Volume·가짜 Token 사용, Alert 평가 비활성화·외부 통신 차단
-- 미검증: 실제 서비스 Endpoint·Export 연결, 실데이터 Dashboard·서비스 간 Waterfall·운영 Telegram
+- 서비스 검증: 실제 Boot 자동 구성·JDBC 장식·고정 Histogram·원문 제외, Prediction 실제 OTLP/HTTP 전송
+- 미검증: 학교 서버의 실제 Endpoint 연결, 실데이터 Dashboard·서비스 간 Waterfall·운영 Telegram
   - 로컬 기동·합성 데이터 검증과 운영 부하·장기 자원 사용량 검증의 구분
 
 ## 공식 근거
