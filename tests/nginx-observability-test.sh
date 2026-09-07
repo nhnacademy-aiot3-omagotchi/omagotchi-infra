@@ -153,16 +153,16 @@ for path in /actuator /actuator/prometheus /actuator/health; do
 done
 
 # IP·Host Header와 무관한 두 OTP 용도의 공통 예산 확인.
-# 테스트 중 예산 회복을 고려한 최대 40회 요청, 첫 429에서 중단.
-for attempt in {1..40}; do
+# 초당 2건 전달 중 회복되는 분당 한도를 고려한 시도 상한, 첫 429에서 중단.
+for attempt in {1..80}; do
   OTP_KIND=signup
   if ((attempt % 2 == 0)); then OTP_KIND=password-reset; fi
   curl --silent --show-error --max-time 20 \
     --dump-header "${TEMP_DIR}/otp-headers" --output "${TEMP_DIR}/otp-body" \
     --header "CF-Connecting-IP: 198.51.100.${attempt}" --header "Host: otp-${attempt}.test" --request POST \
     "http://127.0.0.1:${PROXY_PORT}/bff/v2/auth/${OTP_KIND}/email-otp"
-  if ((attempt <= 2)); then
-    [[ "$(status_code "${TEMP_DIR}/otp-headers")" == 204 ]] || fail "정상 OTP 요청 차단"
+  if ((attempt <= 30)); then
+    [[ "$(status_code "${TEMP_DIR}/otp-headers")" == 204 ]] || fail "한 반 30건의 정상 OTP 요청 차단"
   fi
   result="$(status_code "${TEMP_DIR}/otp-headers")"
   if [[ "${result}" == 429 ]]; then break; fi
