@@ -147,6 +147,11 @@ FRONTEND_REQUEST_ID="$(response_request_id "Frontend 요청" "${FRONTEND_HEADERS
 [[ "$(header_value "X-Received-Request-ID" "${FRONTEND_HEADERS}")" == "${FRONTEND_REQUEST_ID}" ]] ||
   fail "Frontend 전달값과 응답 Request ID가 일치하지 않습니다."
 
+for path in /actuator /actuator/prometheus /actuator/health; do
+  [[ "$(curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' \
+    "http://127.0.0.1:${PROXY_PORT}${path}")" == 404 ]] || fail "내부 Actuator 외부 노출: ${path}"
+done
+
 INTERNAL_HEADERS="${TEMP_DIR}/internal-headers"
 INTERNAL_BODY="${TEMP_DIR}/internal-body"
 curl --silent --show-error \
