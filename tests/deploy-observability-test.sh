@@ -23,7 +23,7 @@ case "$1" in
   pull) [[ "${MODE_TEST_SCENARIO}" != pull-failure ]] ;;
   run)
     [[ " $* " != *" setup "* && " $* " != *"-setup "* ]]
-    if [[ "$*" == *"elastalert check" && "${MODE_TEST_SCENARIO}" == missing-state ]]; then exit 1; fi
+    if [[ "$*" == *"elastalert prepare" && "${MODE_TEST_SCENARIO}" == prepare-failure ]]; then exit 1; fi
     if [[ "$*" == *"filebeat test output"* && "${MODE_TEST_SCENARIO}" == output-failure ]]; then exit 1; fi
     ;;
   up)
@@ -72,7 +72,7 @@ exit 0
 EOF
 chmod +x "${TEST_TMP_DIR}/scripts/observability-compose.sh" "${TEST_TMP_DIR}/bin/sleep" "${TEST_TMP_DIR}/bin/docker"
 
-for scenario in success retry missing-secret pull-failure missing-state output-failure start-failure missing-container restarting restarted; do
+for scenario in success retry missing-secret pull-failure prepare-failure output-failure start-failure missing-container restarting restarted; do
   events="${TEST_TMP_DIR}/${scenario}.events"
   output="${TEST_TMP_DIR}/${scenario}.output"
   : >"${events}"
@@ -83,10 +83,13 @@ for scenario in success retry missing-secret pull-failure missing-state output-f
   case "${scenario}" in
     success | retry)
       [[ "$status" == 0 ]] || { cat "${output}"; exit 1; }
-      for endpoint in '127.0.0.1:9090/-/ready' 'grafana:3000/api/health' 'otel-collector:13133/' 'tempo:3200/ready'; do
+      for endpoint in '127.0.0.1:9090/-/ready' 'grafana.:3000/api/health' 'otel-collector.:13133/' 'tempo.:3200/ready'; do
         grep -Fq "$endpoint" "${events}"
       done
       grep -Fq 'filebeat test output' "${events}"
+      grep -Fq 'elastalert prepare' "${events}"
+      grep -Fq 'HTTP 준비 확인 시작: http://grafana.:3000/api/health' "${output}"
+      grep -Fq 'HTTP 준비 확인 완료: http://grafana.:3000/api/health' "${output}"
       ;;
     *)
       [[ "$status" != 0 ]] || { echo "실패 조건의 성공 처리: ${scenario}" >&2; exit 1; }
@@ -95,7 +98,7 @@ for scenario in success retry missing-secret pull-failure missing-state output-f
   esac
   # 준비 실패 시 실행 중인 관측 도구의 재생성 금지.
   case "${scenario}" in
-    missing-secret | pull-failure | missing-state | output-failure)
+    missing-secret | pull-failure | prepare-failure | output-failure)
       if grep -q ' up ' "${events}"; then exit 1; fi
       ;;
   esac
