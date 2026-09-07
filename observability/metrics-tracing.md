@@ -224,6 +224,11 @@ curl --disable --fail --silent --show-error --max-time 5 http://127.0.0.1:13000/
   - 기존 Rule 업무 로직·`pipeline.correlation.id`·Message Payload 형식 변경 제외
 - Spring: 기존 Micrometer Tracing 유지, Registry·OTLP Exporter의 Boot BOM 관리 버전 사용
   - `/actuator/prometheus`의 내부 노출·Spring Security 허용, 외부 Nginx/Gateway 차단 확인
+    - 수집 경계: 앱 Host Port 미노출·`omagotchi-net`의 Prometheus 직접 조회
+    - 외부 경계: Nginx의 `/actuator`·`/actuator/**` 차단, Gateway 관리 경로 미라우팅
+    - Prediction `/metrics`: 외부 Route 미등록·Host Port 미노출
+    - 제한: 같은 Host의 관리자·Docker 제어 권한 보유자에 대한 격리 보장 없음
+    - 배포 후 확인: 내부 Target `UP`과 외부 관리 경로 차단의 별도 확인
   - HTTP Histogram·Route Label·서비스명 확인, 고유 사용자·Request ID Label 금지
   - OTLP/HTTP Endpoint·제한된 비동기 Export·Timeout·Sampling 설정
   - 운영 초기 Head Sampling `0.1`, 새 Trace 시작점의 결정과 하위 호출의 결정 공유
@@ -247,6 +252,8 @@ curl --disable --fail --silent --show-error --max-time 5 http://127.0.0.1:13000/
   - `TRACING_SAMPLING_PROBABILITY=0.1`: 운영 기본값, 환경 설정 동기화 후 서비스 재생성 시 적용
   - `tracing` Profile의 Collector·Tempo 준비 → 서비스 이미지 배포 → 소량 검증 시 Export 활성화
   - Export Endpoint: Compose에서 `http://omagotchi-otel-collector:4318/v1/traces` 공통 주입
+    - 앱 YAML의 `localhost:4318`은 로컬 기본값, 운영 Container의 전송 주소가 아님
+    - Compose 밖에서 운영 실행 시 실제 Collector 주소의 별도 주입 필수
   - Collector 미준비 상태에서 무조건 Export 활성화 금지
 - 앱 전송 제한
   - Spring: Queue 1,024 Span·Batch 128개·주기 5초·HTTP 연결 1초/응답 2초·Exporter 대기 3초
@@ -272,8 +279,12 @@ curl --disable --fail --silent --show-error --max-time 5 http://127.0.0.1:13000/
   - Tempo `-config.verify=true`: 고정 버전의 설정 해석·유효성 검사, Container 기동·저장 검증과 구분
 - `tests/collector-privacy-test.sh`: HTTP·미분류 Internal·DB·Redis·AI·Tool·Messaging·수동 Span 입력
   - Span 개수·ID·Kind·시간·Parent 관계 보존, 종류별 이름·허용 속성 확인
-  - Spring 서버·클라이언트 속성의 표준 Key 변환, 응답 없는 호출의 Span 보존
+  - Spring 서버·클라이언트 속성의 개별 변환, 누락·잘못된 타입의 다른 속성과 무관한 정상 속성 보존
+  - 기존 OTel 속성 우선, 응답 없는 호출의 Span 보존
   - Scope 이름·버전, URL·SQL·대화·메시지·Event·Link의 가짜 민감정보 제거
+- `tests/prometheus-relabel-test.sh`: 운영 Prometheus 설정과 원본 OTel Label의 실제 Scrape
+  - 격리된 임시 Network·가짜 Prediction 응답, 학교 자원·실제 서비스 접속 없음
+  - `method`·`status`·`uri` 변환·`UNMATCHED`·원본 Label 제거·허용 Meter 확인
 - `tests/runtime-config-sync-test.sh`: Grafana 비밀번호 누락·빈 값의 거절, 기존 운영본·복구본 보존과 후보 파일 삭제
 - Promtool·Collector의 공식 Native Binary 사용 가능: `PROMTOOL_BIN`·`OTELCOL_BIN`, Image와 같은 고정 버전 필요
   - Tempo 설정 검사는 Docker Image 사용
