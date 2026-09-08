@@ -37,6 +37,7 @@ assert_same_keys() {
 
 runtime_keys_file="${TEST_TMP_DIR}/runtime-keys"
 observability_keys_file="${TEST_TMP_DIR}/observability-keys"
+generated_observability_keys_file="${TEST_TMP_DIR}/generated-observability-keys"
 all_runtime_keys_file="${TEST_TMP_DIR}/all-runtime-keys"
 deploy_keys_file="${TEST_TMP_DIR}/deploy-keys"
 prod_example_keys_file="${TEST_TMP_DIR}/prod-example-keys"
@@ -48,11 +49,15 @@ owned_compose_keys_file="${TEST_TMP_DIR}/owned-compose-keys"
   read_array_keys runtime_keys
   read_array_keys optional_runtime_keys
 } | LC_ALL=C sort >"${runtime_keys_file}"
+# Adapter가 계산하는 설정 해시는 외부에서 등록할 Runtime 값과 구분.
+sed -nE 's/^(OBS_[A-Z_]+_CONFIG_REVISION)=.*/\1/p' "${INFRA_DIR}/scripts/observability-compose.sh" \
+  | LC_ALL=C sort -u >"${generated_observability_keys_file}"
 # $$는 Compose 치환이 아닌 Container Shell의 변수 참조. 외부 Env 소유권에서 제외.
 sed 's/\$\$//g' "${INFRA_DIR}/observability/compose.yaml" \
   | grep -oE '\$\{[A-Z][A-Z0-9_]*' \
   | sed 's/^${//' \
-  | LC_ALL=C sort -u >"${observability_keys_file}"
+  | LC_ALL=C sort -u \
+  | comm -23 - "${generated_observability_keys_file}" >"${observability_keys_file}"
 cat "${runtime_keys_file}" "${observability_keys_file}" \
   | LC_ALL=C sort -u >"${all_runtime_keys_file}"
 read_array_keys deploy_keys | LC_ALL=C sort >"${deploy_keys_file}"
@@ -167,13 +172,17 @@ if ! DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${candidate_env}" \
   fail "명시적으로 빈 선택적 Credential이 거부되었습니다."
 fi
 
-if ! DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${full_secret_env}" \
+# 이전 prod.env에 남은 정책값의 Container 재주입 방지.
+cp "${full_secret_env}" "${candidate_env}"
+printf 'LOGIN_MAXIMUM_FAILED_ATTEMPTS=9\nLOGIN_LOCK_DURATION=PT20M\nSESSION_TIMEOUT=PT30M\n' >>"${candidate_env}"
+if ! DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${candidate_env}" \
   "${INFRA_DIR}/scripts/compose.sh" config --format json \
   | jq -e '
-      .services["identity-service"].environment.LOGIN_MAXIMUM_FAILED_ATTEMPTS == "5"
-      and .services["identity-service"].environment.LOGIN_LOCK_DURATION == "PT10M"
+      .services["identity-service"].environment.LOGIN_MAXIMUM_FAILED_ATTEMPTS == null
+      and .services["identity-service"].environment.LOGIN_LOCK_DURATION == null
+      and .services.frontend.environment.SESSION_TIMEOUT == null
     ' >/dev/null; then
-  fail "Identity 로그인 보호 설정이 운영 Compose에 전달되지 않았습니다."
+  fail "서비스로 이관한 정책값이 이전 prod.env에서 다시 주입되었습니다."
 fi
 
 echo "Runtime configuration ownership tests passed"

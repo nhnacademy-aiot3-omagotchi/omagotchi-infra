@@ -27,10 +27,11 @@ case "$1" in
     if [[ "$*" == *"filebeat test output"* && "${MODE_TEST_SCENARIO}" == output-failure ]]; then exit 1; fi
     ;;
   up)
-    for required in --no-deps --force-recreate --wait filebeat elastalert prometheus grafana otel-collector tempo; do
+    for required in --no-deps --wait filebeat elastalert prometheus grafana otel-collector tempo; do
       [[ " $* " == *" ${required} "* ]]
     done
-    [[ "$*" != *setup* && "$*" != *--remove-orphans* ]]
+    [[ "$*" != *setup* && "$*" != *--remove-orphans* && "$*" != *--force-recreate* ]]
+    touch "${MODE_TEST_EVENTS}.started"
     [[ "${MODE_TEST_SCENARIO}" != start-failure ]]
     ;;
   exec)
@@ -42,9 +43,14 @@ case "$1" in
     fi
     ;;
   ps)
+    if [[ ! -f "${MODE_TEST_EVENTS}.started" && "${MODE_TEST_SCENARIO}" == initial ]]; then exit 0; fi
     count=6
-    [[ "${MODE_TEST_SCENARIO}" != missing-container ]] || count=5
+    if [[ -f "${MODE_TEST_EVENTS}.started" && "${MODE_TEST_SCENARIO}" == missing-container ]]; then count=5; fi
     for ((i=0; i<count; i++)); do
+      if [[ -f "${MODE_TEST_EVENTS}.started" && "${MODE_TEST_SCENARIO}" == replaced-restarted && "$i" == 0 ]]; then
+        printf 'fixture-replacement\n'
+        continue
+      fi
       printf 'fixture-container-%s\n' "$i"
     done
     ;;
@@ -60,10 +66,19 @@ for container_id in "$@"; do
   state=running
   restarts=0
   if [[ "$container_id" == fixture-container-0 ]]; then
-    [[ "${MODE_TEST_SCENARIO}" != restarting ]] || state=restarting
-    [[ "${MODE_TEST_SCENARIO}" != restarted ]] || restarts=1
+    case "${MODE_TEST_SCENARIO}" in
+      old-restarts | increased-restarts | replaced-restarted) restarts=5 ;;
+    esac
+    if [[ -f "${MODE_TEST_EVENTS}.started" ]]; then
+      case "${MODE_TEST_SCENARIO}" in
+        restarting) state=restarting ;;
+        restarted) restarts=1 ;;
+        increased-restarts) restarts=6 ;;
+      esac
+    fi
   fi
-  printf '{"State":"%s","Restarts":%s}\n' "$state" "$restarts"
+  [[ "$container_id" != fixture-replacement ]] || restarts=1
+  printf '{"Id":"%s","State":"%s","Restarts":%s}\n' "$container_id" "$state" "$restarts"
 done
 EOF
 cat >"${TEST_TMP_DIR}/bin/sleep" <<'EOF'
@@ -72,7 +87,7 @@ exit 0
 EOF
 chmod +x "${TEST_TMP_DIR}/scripts/observability-compose.sh" "${TEST_TMP_DIR}/bin/sleep" "${TEST_TMP_DIR}/bin/docker"
 
-for scenario in success retry missing-secret pull-failure prepare-failure output-failure start-failure missing-container restarting restarted; do
+for scenario in success initial retry old-restarts missing-secret pull-failure prepare-failure output-failure start-failure missing-container restarting restarted increased-restarts replaced-restarted; do
   events="${TEST_TMP_DIR}/${scenario}.events"
   output="${TEST_TMP_DIR}/${scenario}.output"
   : >"${events}"
@@ -81,7 +96,7 @@ for scenario in success retry missing-secret pull-failure prepare-failure output
     PATH="${TEST_TMP_DIR}/bin:${PATH}" bash "${TEST_TMP_DIR}/scripts/deploy-observability.sh" \
     >"${output}" 2>&1 || status=$?
   case "${scenario}" in
-    success | retry)
+    success | initial | retry | old-restarts)
       [[ "$status" == 0 ]] || { cat "${output}"; exit 1; }
       for endpoint in '127.0.0.1:9090/-/ready' 'grafana.:3000/api/health' 'otel-collector.:13133/' 'tempo.:3200/ready'; do
         grep -Fq "$endpoint" "${events}"

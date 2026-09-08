@@ -12,6 +12,23 @@ compose() {
     --profile alerts --profile metrics --profile tracing "$@" </dev/null
 }
 
+# 같은 Container의 배포 전후 비교용 상태. 환경변수·인증 정보의 조회 제외.
+container_states() {
+  local ids
+  local container_ids=()
+  local container_id
+  ids="$(compose ps --all --quiet "${SERVICES[@]}")" || return 1
+  while IFS= read -r container_id; do
+    [[ -z "${container_id}" ]] || container_ids+=("${container_id}")
+  done <<<"${ids}"
+  if ((${#container_ids[@]} == 0)); then
+    printf '[]\n'
+    return
+  fi
+  docker inspect --format '{"Id":"{{.Id}}","State":"{{.State.Status}}","Restarts":{{.RestartCount}}}' \
+    "${container_ids[@]}" | jq -s .
+}
+
 # 기존 Secret의 검증만 수행. Compose 원문·인증값의 로그 출력 제외.
 if ! compose config --format json 2>/dev/null | jq -e '
   [.services.elastalert.environment.OPS_TELEGRAM_BOT_TOKEN,
@@ -35,9 +52,10 @@ if ! compose run --rm -T --no-deps filebeat \
   exit 1
 fi
 
-# Bind Mount 내용 변경은 Compose의 재생성 판단에 포함되지 않으므로 명시적 재생성.
-# 별도 관측 프로젝트의 여섯 Runtime만 대상, setup Profile·Volume 삭제 제외.
-compose up -d --no-deps --force-recreate --wait --wait-timeout 180 "${SERVICES[@]}"
+# 공개 설정의 내용 해시를 Label로 반영, 이미지·환경변수와 함께 Compose에서 변경 판단.
+# 변경 없는 Runtime·기존 Volume 유지, 최초 기동과 변경 대상만 생성·재생성.
+previous_states="$(container_states)"
+compose up -d --no-deps --wait --wait-timeout 180 "${SERVICES[@]}"
 
 # Running 상태와 HTTP 준비 상태의 구분. 기존 Prometheus 이미지의 wget 재사용.
 # Collector·Tempo 확인을 위한 Host Port·진단 Container 추가 없음.
@@ -75,15 +93,15 @@ for endpoint in \
   echo "관측 도구의 HTTP 준비 확인 완료: ${endpoint}"
 done
 
-# 재시작 Loop의 잠깐 Running인 순간을 성공으로 처리하지 않는 경계.
-# 이번 배포에서 모두 재생성했으므로 자동 재시작 횟수는 0이어야 함.
-container_ids=()
-while IFS= read -r container_id; do
-  [[ -z "${container_id}" ]] || container_ids+=("${container_id}")
-done < <(compose ps --all --quiet "${SERVICES[@]}")
-if ((${#container_ids[@]} != ${#SERVICES[@]})) || \
-  ! docker inspect --format '{"State":"{{.State.Status}}","Restarts":{{.RestartCount}}}' "${container_ids[@]}" \
-    | jq -se 'length == 6 and all(.State == "running" and .Restarts == 0)' >/dev/null; then
+# 과거 재시작 이력은 허용, 이번 배포 중 늘어난 자동 재시작과 비정상 실행 상태는 실패.
+# 새 Container는 비교 이력이 없으므로 자동 재시작 0회 필요.
+current_states="$(container_states)"
+if ! jq -e --argjson previous "${previous_states}" --argjson count "${#SERVICES[@]}" '
+  length == $count and all(.[];
+    . as $current |
+    .State == "running" and
+    .Restarts <= ([$previous[] | select(.Id == $current.Id) | .Restarts][0] // 0)
+  )' <<<"${current_states}" >/dev/null; then
   echo "관측 Container 실행 상태 확인 실패. 누락·종료·재시작 여부 확인 필요." >&2
   exit 1
 fi

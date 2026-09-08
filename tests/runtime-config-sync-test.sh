@@ -192,9 +192,8 @@ assert_contains '추적 파일 변경이 있어 설정 동기화를 중단합니
 [[ ! -e "${candidate}" ]] || fail "Git 상태 검증 실패 이후 후보 Runtime 설정이 남았습니다."
 
 # 실제 관측 Compose 해석으로 선택적 도입·설정 교체 경계 확인. ES 접속·Container 실행 없음.
-mkdir "${fixture_dir}/observability"
 cp "${INFRA_DIR}/scripts/observability-compose.sh" "${fixture_dir}/scripts/observability-compose.sh"
-cp "${INFRA_DIR}/observability/compose.yaml" "${fixture_dir}/observability/compose.yaml"
+cp -R "${INFRA_DIR}/observability" "${fixture_dir}/observability"
 candidate="${secrets_dir}/.incoming-prod.env.observability"
 printf 'NEW_SECRET=new-runtime-value\n' >"${candidate}"
 grep '^ELASTICSEARCH_' "${INFRA_DIR}/.env.prod.example" >>"${candidate}"

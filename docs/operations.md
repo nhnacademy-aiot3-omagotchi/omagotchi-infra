@@ -159,19 +159,28 @@ shellcheck scripts/*.sh tests/*.sh
   - 일부 Index·Alias·Template·ILM 존재 또는 조회 실패 시 생성·덮어쓰기 없이 중단
   - 중앙 로그 저장소 최초 준비는 [중앙 로그·오류 알림](../observability/README.md)의 기존 절차 사용
   - 준비 실패 시 실행 중인 관측 도구 유지, 생성 도중 실패한 경우 부분 상태의 수동 확인 필요
-- 반영 방식: 여섯 도구의 명시적 재생성, 기존 Named Volume 유지
-  - Bind Mount 파일 변경·환경변수·Image 반영, 단순 `up`의 설정 변경 누락 방지
-  - Infra 배포 중 짧은 수집 공백 가능, Trace·알림의 무손실 보장 아님
+- 반영 방식: `observability-compose.sh`를 통한 변경 대상만 재생성, 기존 Named Volume 유지
+  - 도구별 공개 설정 파일의 내용·경로 해시를 `site.omagotchi.config-revision` Label에 반영
+  - Image·환경변수·Compose 설정·위 Label 변경은 일반 `up`에서 판단, 변경 없는 컨테이너 유지
+  - Secret·저장 데이터는 해시 대상에서 제외, Secret 교체는 해당 환경변수 변경으로 반영
+  - 첫 적용 시 Label이 없는 기존 도구의 한 차례 재생성, 별도 배포 이력 파일·운영 환경변수 등록 불필요
+  - 직접 `docker compose` 실행 시 설정 파일의 내용 변경 감지 제외, 운영 진입점은 Adapter로 통일
+  - 변경된 도구의 재생성 중 짧은 수집 공백 가능, Trace·알림의 무손실 보장 아님
 - 완료 조건: 네 도구의 HTTP 준비 응답과 여섯 Runtime Container의 실행 상태
   - 점검 시작·완료 Endpoint 출력, DNS·연결·HTTP 오류의 구분
   - Prometheus의 wget에서 `grafana.`·`otel-collector.`·`tempo.` 사용
     - 서버 resolver의 `search .` 환경에서 짧은 이름 조회가 실패하는 상황 방지
-  - 새 Container의 자동 재시작 0회, 재시작 Loop의 일시적 Running 상태도 실패 처리
+  - 새 Container의 자동 재시작 0회, 유지한 Container는 배포 전보다 자동 재시작 횟수가 늘지 않는 상태
+  - 과거 재시작 이력만으로 실패 처리하지 않는 기준, 이번 배포 중 재시작 증가·비정상 상태는 실패
   - 전체 서비스 Scrape·Trace 저장·Telegram 수신은 별도 운영 검증
 - 실패 처리: Actions 실패, 이미 배포된 업무 서비스의 자동 Rollback 없음
   - 관측성 로그·저장소 준비 상태 확인 후 `main`의 `Deploy Infrastructure` 재실행
   - 배포 재실행 시 업무 서비스 단계도 포함, 관측성 보조 Script의 단독 실행은 공용 Lock 미적용
   - 복구를 위한 `down --volumes`·초기화 무조건 재실행 금지
+
+- 근거: [Docker Compose up](https://docs.docker.com/reference/cli/docker/compose/up/)
+  - 서비스 설정·Image 변경 시 재생성, 연결된 Volume 유지
+  - 공개 설정의 내용 해시 Label은 Bind Mount 파일 변경을 Compose 설정 변경으로 전달하기 위한 팀 구현
 
 ## 이전 서비스 이미지 정리
 
