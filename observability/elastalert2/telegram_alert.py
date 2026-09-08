@@ -53,7 +53,7 @@ class OperationsTelegramAlerter(Alerter):
         for label, field in fields:
             value = lookup_es_key(match, field)
             if field == "@timestamp" and occurred_at is not None:
-                label, value = "시각 (한국)", occurred_at.strftime("%Y-%m-%d %H:%M:%S KST")
+                value = occurred_at.strftime("%Y-%m-%d %H:%M:%S KST")
             if value is not None and not isinstance(value, (dict, list)):
                 # 계약상 안전한 필드만 사용. 개행·장문에 의한 메시지 형식 훼손 방지.
                 lines.append(f"{label}: {' '.join(str(value).split())[:200]}")
@@ -61,12 +61,10 @@ class OperationsTelegramAlerter(Alerter):
         request_id = lookup_es_key(match, "http.request.id")
         trace_id = lookup_es_key(match, "trace.id")
         # 검색식과 URL에는 현재 식별자 계약을 만족하는 값만 포함.
-        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+        if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", request_id):
             request_id = None
         if not isinstance(trace_id, str) or not re.fullmatch(r"[0-9a-f]{32}", trace_id):
             trace_id = None
-        if request_id:
-            lines.append(f'검색: http.request.id : "{request_id}"')
         if time_range is None:
             lines.append("조회 시각 확인 필요: 화면에서 발생 시간 범위 직접 선택")
 

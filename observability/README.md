@@ -258,7 +258,7 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
   - 첫 대표 오류 한 건, 같은 그룹 10분 재알림 억제
   - 반복 지속 시 최대 1시간까지 재알림 간격 증가
   - 억제 건수 요약·모든 그룹 합계의 전역 전송량 상한 아님
-- 메시지: 한국 시각·서비스·HTTP 상태·오류 종류·안전한 요약·경로·Request ID·Trace ID·KQL
+- 메시지: 시각(KST)·서비스·HTTP 상태·오류 종류·안전한 요약·경로·Request ID·Trace ID
   - Stack Trace·Body·Cookie·Token 제외, Markdown/HTML 해석 없음
   - `message`는 앱의 안전한 요약 계약 전제, 임의 문자열의 자동 민감정보 판별 기능 아님
 - 조회 버튼
@@ -271,6 +271,8 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
     - Grafana 브라우저 접속 변경의 Infra 배포·[Cloudflare 설정](grafana-access.md) 완료 후 사용
     - Cloudflare Access·Grafana 로그인 유지, Sampling·보존 기간에 따른 조회 결과 부재 가능
   - 잘못된 식별자의 검색식 삽입 금지, Trace ID 부재 시 Trace 버튼 생략
+    - Request ID: 영문·숫자·점·밑줄·하이픈으로 이루어진 1~32자
+    - Trace ID: 기존 소문자 16진수 32자리 유지
   - 시각 누락·잘못된 값: 알림 전송 유지, 화면에서 시간 범위 직접 선택 안내
   - 클릭 시 브라우저의 조회만 수행, 알림 전송기의 Kibana·Grafana 접속·단축 URL 생성 없음
   - 고정된 과거 시간의 조회도 로그·Trace 보존 기간이 지난 자료의 복구는 불가
