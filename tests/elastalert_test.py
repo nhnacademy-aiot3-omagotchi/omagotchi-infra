@@ -51,10 +51,11 @@ class TelegramAlertTest(unittest.TestCase):
             self.assertNotIn("parse_mode", options["json"])
             text = options["json"]["text"]
             self.assertIn("요약: 요청 처리 실패 확인 필요", text)
-            self.assertIn("시각 (한국): 2026-09-08 10:00:07 KST", text)
+            self.assertIn("시각: 2026-09-08 10:00:07 KST", text)
             self.assertIn("HTTP 상태: 503", text)
             self.assertIn("http.response.status_code", rules[0]["include"])
-            self.assertIn('http.request.id : "' + "a" * 32 + '"', text)
+            self.assertIn("Request ID: " + "a" * 32, text)
+            self.assertNotIn("검색:", text)
             for secret in ("private-stack", "private-body", "private-token", "fixture-token"):
                 self.assertNotIn(secret, json.dumps(options["json"]))
             self.assertNotIn("None", text)
@@ -131,11 +132,30 @@ class TelegramAlertTest(unittest.TestCase):
                 self.assertNotIn("timeRange", discover)
                 session.post.assert_called_once()
 
+    def test_safe_request_ids_are_preserved_in_search_links(self):
+        # Given: 소문자 16진수가 아니어도 허용한 문자·길이의 확정 ID.
+        with patch.dict(os.environ, OPS_TELEGRAM_BOT_TOKEN="fixture-token", OPS_TELEGRAM_CHAT_ID="-100123"):
+            alerter = OperationsTelegramAlerter({})
+        for request_id in ("Dev-Request_01.test", "Z", "A" * 32):
+            with self.subTest(request_id=request_id), patch("telegram_alert.requests.Session") as factory:
+                session = factory.return_value.__enter__.return_value
+                session.post.return_value.status_code = 200
+                session.post.return_value.json.return_value = {"ok": True}
+                # When
+                alerter.alert([{"http.request.id": request_id, "trace.id": request_id}])
+                # Then: Request ID의 정확한 검색, Trace ID 규칙은 기존대로 유지.
+                buttons = session.post.call_args.kwargs["json"]["reply_markup"]["inline_keyboard"][0]
+                discover = json.loads(parse_qs(urlparse(buttons[0]["url"]).query)["p"][0])
+                self.assertEqual(discover["query"]["query"], f'http.request.id : "{request_id}"')
+                self.assertEqual(len(buttons), 1)
+
     def test_invalid_identifiers_are_not_added_to_search_links(self):
         # Given: 검색식·외부 주소로 해석될 수 있는 비정상 식별자와 Trace만 있는 오류.
         with patch.dict(os.environ, OPS_TELEGRAM_BOT_TOKEN="fixture-token", OPS_TELEGRAM_CHAT_ID="-100123"):
             alerter = OperationsTelegramAlerter({})
-        for request_id, trace_id in ((None, None), ('" or *', "https://example.invalid"), ({}, []), (None, "b" * 32)):
+        for request_id, trace_id in ((None, None), ('" or *', "https://example.invalid"),
+                                     ("a" * 33, None), ("a" * 32 + "\n", None), ("", None),
+                                     ({}, []), (None, "b" * 32)):
             with self.subTest(request_id=request_id, trace_id=trace_id), patch("telegram_alert.requests.Session") as factory:
                 session = factory.return_value.__enter__.return_value
                 session.post.return_value.status_code = 200

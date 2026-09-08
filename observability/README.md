@@ -178,7 +178,8 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
 - 서버 임시 수정본의 배포 전 확인: `git diff -- observability/filebeat/filebeat.yml`
   - 서버에서 적용한 `.project.value` 수정의 보존·원격 반영 확인 후 작업 트리 정리
   - 다른 변경의 일괄 폐기 금지, 추적 파일 변경이 남으면 자동 배포 중단
-- Filebeat 설정 변경: `./scripts/observability-compose.sh up -d --no-deps --force-recreate filebeat`
+- Filebeat 설정 변경: `./scripts/observability-compose.sh up -d --no-deps filebeat`
+  - 공개 설정의 내용 해시 Label로 변경 감지, 같은 설정의 재실행에서는 컨테이너 유지
   - Bind Mount 파일 수정만으로 자동 재기동되지 않는 점 주의
 - 수집 중지: `./scripts/observability-compose.sh stop filebeat`
 - 최초 초기화가 끝난 뒤 `filebeat-setup` 재실행 금지, 수집기만 재생성
@@ -257,7 +258,7 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
   - 첫 대표 오류 한 건, 같은 그룹 10분 재알림 억제
   - 반복 지속 시 최대 1시간까지 재알림 간격 증가
   - 억제 건수 요약·모든 그룹 합계의 전역 전송량 상한 아님
-- 메시지: 한국 시각·서비스·HTTP 상태·오류 종류·안전한 요약·경로·Request ID·Trace ID·KQL
+- 메시지: 시각(KST)·서비스·HTTP 상태·오류 종류·안전한 요약·경로·Request ID·Trace ID
   - Stack Trace·Body·Cookie·Token 제외, Markdown/HTML 해석 없음
   - `message`는 앱의 안전한 요약 계약 전제, 임의 문자열의 자동 민감정보 판별 기능 아님
 - 조회 버튼
@@ -270,6 +271,8 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
     - Grafana 브라우저 접속 변경의 Infra 배포·[Cloudflare 설정](grafana-access.md) 완료 후 사용
     - Cloudflare Access·Grafana 로그인 유지, Sampling·보존 기간에 따른 조회 결과 부재 가능
   - 잘못된 식별자의 검색식 삽입 금지, Trace ID 부재 시 Trace 버튼 생략
+    - Request ID: 영문·숫자·점·밑줄·하이픈으로 이루어진 1~32자
+    - Trace ID: 기존 소문자 16진수 32자리 유지
   - 시각 누락·잘못된 값: 알림 전송 유지, 화면에서 시간 범위 직접 선택 안내
   - 클릭 시 브라우저의 조회만 수행, 알림 전송기의 Kibana·Grafana 접속·단축 URL 생성 없음
   - 고정된 과거 시간의 조회도 로그·Trace 보존 기간이 지난 자료의 복구는 불가
@@ -305,7 +308,8 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
   3. 반복되는 같은 내부 예외라면 아래 중지 명령 실행 후 설정·코드 원인 확인
   4. 수정 후 Container 재생성·새로운 대표 오류 한 건의 수신 확인
 - 알림 중지: `./scripts/observability-compose.sh stop elastalert`
-- 설정·Token 교체: `PROD_ENV` 동기화 후 `./scripts/observability-compose.sh up -d --no-deps --force-recreate elastalert`
+- 설정·Token 교체: `PROD_ENV` 동기화 후 `./scripts/observability-compose.sh up -d --no-deps elastalert`
+  - 공개 설정은 내용 해시 Label, Token·Chat ID는 환경변수 변경으로 재생성 판단
   - 초기화 재실행 금지, 설정 중지 목적으로 Token 항목 삭제 금지
 - 알림 장애 시 Filebeat·업무 서비스의 독립 실행 유지
 - 로컬 검증: `./tests/elastalert-test.sh`
