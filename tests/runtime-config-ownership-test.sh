@@ -167,13 +167,17 @@ if ! DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${candidate_env}" \
   fail "명시적으로 빈 선택적 Credential이 거부되었습니다."
 fi
 
-if ! DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${full_secret_env}" \
+# 이전 prod.env에 남은 정책값의 Container 재주입 방지.
+cp "${full_secret_env}" "${candidate_env}"
+printf 'LOGIN_MAXIMUM_FAILED_ATTEMPTS=9\nLOGIN_LOCK_DURATION=PT20M\nSESSION_TIMEOUT=PT30M\n' >>"${candidate_env}"
+if ! DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${candidate_env}" \
   "${INFRA_DIR}/scripts/compose.sh" config --format json \
   | jq -e '
-      .services["identity-service"].environment.LOGIN_MAXIMUM_FAILED_ATTEMPTS == "5"
-      and .services["identity-service"].environment.LOGIN_LOCK_DURATION == "PT10M"
+      .services["identity-service"].environment.LOGIN_MAXIMUM_FAILED_ATTEMPTS == null
+      and .services["identity-service"].environment.LOGIN_LOCK_DURATION == null
+      and .services.frontend.environment.SESSION_TIMEOUT == null
     ' >/dev/null; then
-  fail "Identity 로그인 보호 설정이 운영 Compose에 전달되지 않았습니다."
+  fail "서비스로 이관한 정책값이 이전 prod.env에서 다시 주입되었습니다."
 fi
 
 echo "Runtime configuration ownership tests passed"
