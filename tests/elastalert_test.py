@@ -1,12 +1,15 @@
 """제품 Rule 해석과 팀 확장의 안전 경계 검증. 외부 연결 없는 실행."""
 
 import io
+import json
 import os
 import traceback
 import unittest
 from contextlib import redirect_stderr
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 import requests
 from elasticsearch import NotFoundError, TransportError
@@ -28,9 +31,11 @@ class TelegramAlertTest(unittest.TestCase):
             rules = conf["rules_loader"].load(conf)
         self.assertEqual(len(rules), 1)
         alerter = rules[0]["alert"][0]
-        match = {"service": {"name": "gateway-service"}, "error": {"code": "SYS_001", "type": "TimeoutError",
+        match = {"@timestamp": "2026-09-08T01:00:07.767Z",
+                 "service": {"name": "gateway-service"}, "error": {"code": "SYS_001", "type": "TimeoutError",
                  "stack_trace": "private-stack"}, "message": "요청 처리 실패\n확인 필요",
-                 "http": {"request": {"id": "a" * 32, "body": "private-body"}},
+                 "http": {"request": {"id": "a" * 32, "body": "private-body"}, "response": {"status_code": 503}},
+                 "trace": {"id": "b" * 32},
                  "authorization": "private-token"}
         with patch("telegram_alert.requests.Session") as session_factory:
             session = session_factory.return_value.__enter__.return_value
@@ -46,11 +51,107 @@ class TelegramAlertTest(unittest.TestCase):
             self.assertNotIn("parse_mode", options["json"])
             text = options["json"]["text"]
             self.assertIn("요약: 요청 처리 실패 확인 필요", text)
+            self.assertIn("시각 (한국): 2026-09-08 10:00:07 KST", text)
+            self.assertIn("HTTP 상태: 503", text)
+            self.assertIn("http.response.status_code", rules[0]["include"])
             self.assertIn('http.request.id : "' + "a" * 32 + '"', text)
             for secret in ("private-stack", "private-body", "private-token", "fixture-token"):
-                self.assertNotIn(secret, text)
+                self.assertNotIn(secret, json.dumps(options["json"]))
             self.assertNotIn("None", text)
             self.assertEqual(alerter.get_info(), {"type": "omagotchi-telegram"})
+
+            # Then: 팀 로그·Request ID·고정 시각의 Locator와 해당 Trace의 Explore 연결.
+            log_button, trace_button = options["json"]["reply_markup"]["inline_keyboard"][0]
+            log_url = urlparse(log_button["url"])
+            self.assertEqual(log_url.netloc, "s4.java21.net:5601")
+            self.assertEqual(log_url.path, "/s/aiot3-team5-omagotchi/app/r")
+            log_params = parse_qs(log_url.query)
+            self.assertEqual(log_params["l"], ["DISCOVER_APP_LOCATOR"])
+            discover = json.loads(log_params["p"][0])
+            self.assertEqual(discover["dataViewSpec"], {
+                "title": "logs-omagotchi-prod", "timeFieldName": "@timestamp",
+            })
+            self.assertEqual(discover["query"], {"language": "kuery", "query": f'http.request.id : "{"a" * 32}"'})
+            self.assertEqual(discover["timeRange"], {
+                "from": "2026-09-08T00:55:07.767000+00:00", "to": "2026-09-08T01:05:07.767000+00:00",
+            })
+            self.assertIn("http.response.status_code", discover["columns"])
+
+            trace_url = urlparse(trace_button["url"])
+            self.assertEqual((trace_url.scheme, trace_url.netloc, trace_url.path),
+                             ("https", "grafana.omagotchi.site", "/explore"))
+            trace_params = parse_qs(trace_url.query)
+            self.assertEqual(trace_params["schemaVersion"], ["1"])
+            pane = json.loads(trace_params["panes"][0])["A"]
+            self.assertEqual(pane["datasource"], "omagotchi-tempo")
+            self.assertEqual(pane["queries"][0]["query"], "b" * 32)
+            self.assertEqual(pane["queries"][0]["queryType"], "traceql")
+            self.assertEqual(int(pane["range"]["to"]) - int(pane["range"]["from"]), 600000)
+            self.assertEqual(int(pane["range"]["from"]),
+                             int(datetime(2026, 9, 8, 0, 55, 7, 767000, tzinfo=timezone.utc).timestamp() * 1000))
+
+    def test_product_datetime_and_iso_timestamp_produce_same_message(self):
+        # Given: 제품에서 변환한 시각과 같은 순간의 UTC·한국 시간 ISO 문자열.
+        timestamps = (
+            datetime(2026, 9, 8, 1, 0, tzinfo=timezone.utc),
+            "2026-09-08T01:00:00Z",
+            "2026-09-08T10:00:00+09:00",
+        )
+        with patch.dict(os.environ, OPS_TELEGRAM_BOT_TOKEN="fixture-token", OPS_TELEGRAM_CHAT_ID="-100123"), \
+                patch("telegram_alert.requests.Session") as factory:
+            alerter = OperationsTelegramAlerter({})
+            session = factory.return_value.__enter__.return_value
+            session.post.return_value.status_code = 200
+            session.post.return_value.json.return_value = {"ok": True}
+            messages = []
+            for timestamp in timestamps:
+                # When: 서로 다른 시각 표현의 동일 오류 전송.
+                alerter.alert([{"@timestamp": timestamp, "http.request.id": "a" * 32, "trace.id": "b" * 32}])
+                messages.append(session.post.call_args.kwargs["json"])
+            # Then: 표시 시각과 두 조회 링크의 일치.
+            self.assertEqual(messages[0], messages[1])
+            self.assertEqual(messages[1], messages[2])
+
+    def test_missing_or_invalid_timestamp_does_not_block_alert(self):
+        # Given: 시각 누락·잘못된 값·시간대 없는 값.
+        with patch.dict(os.environ, OPS_TELEGRAM_BOT_TOKEN="fixture-token", OPS_TELEGRAM_CHAT_ID="-100123"):
+            alerter = OperationsTelegramAlerter({})
+        for timestamp in (None, "invalid", "2026-09-08T01:00:00", {}, "9999-12-31T23:59:59Z"):
+            with self.subTest(timestamp=timestamp), patch("telegram_alert.requests.Session") as factory:
+                session = factory.return_value.__enter__.return_value
+                session.post.return_value.status_code = 200
+                session.post.return_value.json.return_value = {"ok": True}
+                # When: 시각이 올바르지 않은 오류의 전송.
+                alerter.alert([{"@timestamp": timestamp, "http.request.id": "a" * 32}])
+                # Then: 전송 유지·시각 확인 안내·임의 발생 시각 생성 금지.
+                payload = session.post.call_args.kwargs["json"]
+                self.assertIn("조회 시각 확인 필요", payload["text"])
+                button = payload["reply_markup"]["inline_keyboard"][0][0]
+                discover = json.loads(parse_qs(urlparse(button["url"]).query)["p"][0])
+                self.assertNotIn("timeRange", discover)
+                session.post.assert_called_once()
+
+    def test_invalid_identifiers_are_not_added_to_search_links(self):
+        # Given: 검색식·외부 주소로 해석될 수 있는 비정상 식별자와 Trace만 있는 오류.
+        with patch.dict(os.environ, OPS_TELEGRAM_BOT_TOKEN="fixture-token", OPS_TELEGRAM_CHAT_ID="-100123"):
+            alerter = OperationsTelegramAlerter({})
+        for request_id, trace_id in ((None, None), ('" or *', "https://example.invalid"), ({}, []), (None, "b" * 32)):
+            with self.subTest(request_id=request_id, trace_id=trace_id), patch("telegram_alert.requests.Session") as factory:
+                session = factory.return_value.__enter__.return_value
+                session.post.return_value.status_code = 200
+                session.post.return_value.json.return_value = {"ok": True}
+                # When: 알림 조회 버튼 생성.
+                alerter.alert([{"http.request.id": request_id, "trace.id": trace_id}])
+                # Then: 고정된 팀 화면만 연결, 유효한 Trace가 있으면 로그 검색에도 활용.
+                buttons = session.post.call_args.kwargs["json"]["reply_markup"]["inline_keyboard"][0]
+                discover = json.loads(parse_qs(urlparse(buttons[0]["url"]).query)["p"][0])
+                if trace_id == "b" * 32:
+                    self.assertEqual(len(buttons), 2)
+                    self.assertEqual(discover["query"]["query"], f'trace.id : "{"b" * 32}"')
+                else:
+                    self.assertEqual(len(buttons), 1)
+                    self.assertNotIn("query", discover)
+                self.assertNotIn("example.invalid", json.dumps(buttons))
 
     def test_failure_does_not_leak_token_or_retry_inside_sender(self):
         # Given: Token URL이 포함된 Timeout·HTTP 오류 응답.
