@@ -139,6 +139,9 @@ services:
         exec /run.sh
     environment:
       GOMEMLIMIT: 384MiB
+      # 외부 HTTPS는 Cloudflare에서 종료, Tunnel의 내부 HTTP 연결 유지.
+      GF_SERVER_ROOT_URL: https://grafana.omagotchi.site/
+      GF_SECURITY_COOKIE_SECURE: "true"
       GF_SECURITY_ADMIN_USER: omagotchi-admin
       GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-}"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
@@ -152,7 +155,7 @@ services:
       OPS_TELEGRAM_BOT_TOKEN: "${OPS_TELEGRAM_BOT_TOKEN:-}"
       OPS_TELEGRAM_CHAT_ID: "${OPS_TELEGRAM_CHAT_ID:-}"
     ports:
-      # 서버 외부 공개 금지. SSH Local Forward 전용.
+      # 운영자 연결 진단용 루프백 유지. 평소 화면은 Access로 보호한 HTTPS 주소 사용.
       - "127.0.0.1:13000:3000"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -160,6 +163,7 @@ services:
       - grafana-data:/var/lib/grafana
     tmpfs:
       - /tmp:size=16m,mode=1777
+    networks: [default, grafana-ingress]
 
   otel-collector:
     <<: *telemetry
@@ -196,6 +200,10 @@ networks:
   app:
     external: true
     name: omagotchi-net
+  # 운영 Compose의 cloudflared 기동 시 생성, Grafana 외의 관측 도구는 참여 제외.
+  grafana-ingress:
+    external: true
+    name: omagotchi-grafana-net
 
 volumes:
   filebeat-data:

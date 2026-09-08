@@ -173,6 +173,30 @@ shellcheck scripts/*.sh tests/*.sh
   - 배포 재실행 시 업무 서비스 단계도 포함, 관측성 보조 Script의 단독 실행은 공용 Lock 미적용
   - 복구를 위한 `down --volumes`·초기화 무조건 재실행 금지
 
+## 이전 서비스 이미지 정리
+
+- 실행 시점: 개별 서비스의 새 SHA 배포 성공 후, 같은 배포 Lock 안에서 실행
+  - Healthcheck·외부 Smoke Test 통과와 `deploy.env` 갱신 이후
+  - Rule은 A/B 순차 교체·역할 확인까지 성공한 뒤 한 번 실행
+- 정리 대상: 방금 배포한 서비스의 팀 GHCR 저장소와 일치하는 로컬 40자리 SHA 태그
+  - 예시: Frontend 배포 시 `ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-frontend`만 대상
+  - 현재 성공 이미지·직전 성공 이미지 보존, 같은 이미지의 다른 태그도 보존
+  - 실행 중이거나 중지된 Container의 참조 이미지 보존, 다른 팀 Container도 포함
+- 제외 대상: 다른 서비스·다른 팀 이미지, `main`·수동 태그, 태그 없는 이미지, 관측 도구 이미지
+  - Volume·로그·Build Cache·GHCR 원격 이미지의 삭제 없음
+  - 전체 `prune`·강제 삭제 미사용, 공통 이미지 Layer의 실제 회수량 차이 가능
+- 정리 생략: 배포 실패·같은 SHA 재배포·전체 Infra 배포
+  - 같은 SHA 재배포에서는 직전의 다른 성공 SHA 확인이 어려우므로 기존 이미지 유지
+  - 누적 이미지도 각 서비스의 다음 새 SHA 배포 성공 시 같은 기준으로 정리
+  - 별도 이력 파일·일괄 수동 정리 불필요, 새 배포가 없는 서비스의 기존 이미지 유지
+- 실패 처리: 이미지·Container 조회 실패 시 정리 중단, 삭제 실패 시 남은 정리 중단
+  - 성공한 배포 상태 유지, 자동 Rollback 없음
+  - 다음 새 SHA 배포 시 재시도, 반복 경고 시 Docker 상태·이미지 존재 여부 확인
+- 확인 위치: 서비스 배포 Actions의 `이전 서비스 이미지 정리`·`경고: 이전 이미지 정리 실패` 출력
+  - 정리 후 서버의 `docker system df`로 사용량 확인 가능
+  - 필요 시 남아 있는 GHCR SHA 태그의 재다운로드 가능, 원격 태그 보존 기간은 별도
+- 근거: [로컬 이미지 삭제](https://docs.docker.com/reference/cli/docker/image/rm/), [Container 조회](https://docs.docker.com/reference/cli/docker/container/ls/)
+
 ## OTP 발급 요청 제한
 
 - 대상: 회원가입·비밀번호 재설정의 OTP 발급 POST 두 경로

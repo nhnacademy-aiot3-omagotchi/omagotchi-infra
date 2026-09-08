@@ -23,7 +23,9 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
 - Nginx
 - Cloudflare Tunnel
 
-운영 서비스는 `omagotchi-net` 내부 Network를 사용하며 외부 요청은 Nginx를 통해서만 수신.
+- 업무 서비스: `omagotchi-net` 내부 Network 사용, 외부 요청의 Nginx 경유
+- Grafana: Cloudflare Access → 기존 Tunnel → 전용 Network로 별도 연결
+  - Infra 배포와 [Cloudflare 접속 설정](observability/grafana-access.md) 완료 후 사용
 
 ## 설정 계약
 
@@ -126,6 +128,9 @@ shellcheck scripts/*.sh tests/*.sh
 - Container Host Port의 최소 노출
 - Healthcheck 통과 전 배포 완료 처리 금지
 - 실패 시 직전 이미지 SHA 기반 복구
+- 새 SHA 배포 성공 후 해당 서비스의 오래된 로컬 이미지 정리
+  - 현재·직전 성공 이미지와 Container 참조 이미지 보존
+  - 같은 SHA 재배포·실패한 배포의 정리 생략, 정리 실패 시 경고 후 배포 상태 유지
 - Secret·Token·Password의 출력 금지
 
 ## 운영 절차
