@@ -178,7 +178,8 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
 - 서버 임시 수정본의 배포 전 확인: `git diff -- observability/filebeat/filebeat.yml`
   - 서버에서 적용한 `.project.value` 수정의 보존·원격 반영 확인 후 작업 트리 정리
   - 다른 변경의 일괄 폐기 금지, 추적 파일 변경이 남으면 자동 배포 중단
-- Filebeat 설정 변경: `./scripts/observability-compose.sh up -d --no-deps --force-recreate filebeat`
+- Filebeat 설정 변경: `./scripts/observability-compose.sh up -d --no-deps filebeat`
+  - 공개 설정의 내용 해시 Label로 변경 감지, 같은 설정의 재실행에서는 컨테이너 유지
   - Bind Mount 파일 수정만으로 자동 재기동되지 않는 점 주의
 - 수집 중지: `./scripts/observability-compose.sh stop filebeat`
 - 최초 초기화가 끝난 뒤 `filebeat-setup` 재실행 금지, 수집기만 재생성
@@ -305,7 +306,8 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
   3. 반복되는 같은 내부 예외라면 아래 중지 명령 실행 후 설정·코드 원인 확인
   4. 수정 후 Container 재생성·새로운 대표 오류 한 건의 수신 확인
 - 알림 중지: `./scripts/observability-compose.sh stop elastalert`
-- 설정·Token 교체: `PROD_ENV` 동기화 후 `./scripts/observability-compose.sh up -d --no-deps --force-recreate elastalert`
+- 설정·Token 교체: `PROD_ENV` 동기화 후 `./scripts/observability-compose.sh up -d --no-deps elastalert`
+  - 공개 설정은 내용 해시 Label, Token·Chat ID는 환경변수 변경으로 재생성 판단
   - 초기화 재실행 금지, 설정 중지 목적으로 Token 항목 삭제 금지
 - 알림 장애 시 Filebeat·업무 서비스의 독립 실행 유지
 - 로컬 검증: `./tests/elastalert-test.sh`
