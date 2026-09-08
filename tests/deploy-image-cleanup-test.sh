@@ -75,12 +75,15 @@ docker() {
 
 # 현재·직전 성공 이미지, 별칭, 실행·중지 Container 참조, 비대상 저장소 보존.
 : >"${deleted_file}"
+# 위에서 불러온 실제 함수 호출. 아래의 같은 이름 함수는 배포 흐름 검증용 대역.
+# shellcheck disable=SC2218
 cleanup_service_images frontend "${current_sha}" "${previous_sha}" >/dev/null
 [[ "$(<"${deleted_file}")" == "${repository}:${unused_sha}" ]] ||
   fail "사용하지 않는 과거 SHA 태그만 삭제하지 못했습니다."
 
 # 같은 SHA 재배포와 잘못된 입력의 Docker 호출 금지.
 : >"${calls_file}"
+# shellcheck disable=SC2218
 cleanup_service_images frontend "${current_sha}" "${current_sha}"
 if cleanup_service_images nginx "${current_sha}" "${previous_sha}"; then
   fail "허용하지 않은 서비스의 이미지 정리가 실행됐습니다."
