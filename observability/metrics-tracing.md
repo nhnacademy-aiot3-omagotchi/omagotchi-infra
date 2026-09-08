@@ -1,6 +1,6 @@
 # 메트릭·주요 Span 수집 운영
 
-> 상태: 운영 기동·Grafana 메트릭 표시 확인, 자동배포 연결 보완·Trace/알림 운영 검증 필요 · 기준일: 2026-09-07
+> 상태: 자동배포·Grafana 메트릭 표시 확인, Grafana 도메인 연결·대표 Trace/알림 운영 확인 필요 · 기준일: 2026-09-08
 
 ## 이번 변경과 남은 작업
 
@@ -37,14 +37,18 @@
   - `tracing`: Collector·Tempo
   - 수동 명령의 선택 실행 단위, 전체 Infra 자동배포에서는 세 Profile과 Filebeat 사용
   - 최초 저장소 준비·평상시 배포의 구분: [관측성 자동배포](../docs/operations.md#관측성-자동배포)
-- 앱 Network `omagotchi-net`: Prometheus Scrape·Collector OTLP 수신만 참여
+- 관측 도구 중 앱 Network `omagotchi-net` 참여: Prometheus Scrape·Collector OTLP 수신
 - 관측 전용 Network: Prometheus·Grafana·Collector·Tempo 연결
   - Data Source: `http://prometheus:9090`, `http://tempo:3200`
   - 앱 Export: `http://omagotchi-otel-collector:4318/v1/traces`
   - Collector → Tempo: `tempo:4317`
-- 유일한 Host Port: Grafana `127.0.0.1:13000`
-  - SSH Tunnel 전용, Nginx·Cloudflare Route 추가 없음
-  - 학교 공유 Network 내부 도구 간 인증·TLS 없음, 별도 보안 경계로 간주 금지
+- Grafana 브라우저 접속: `https://grafana.omagotchi.site`
+  - Cloudflare Access의 팀원 이메일 확인과 기존 Grafana 로그인 유지
+  - 기존 Tunnel과 Grafana의 전용 Network `omagotchi-grafana-net` 사용, Nginx 변경 없음
+  - 적용 순서: [Access 설정 → Infra 배포 → Tunnel Route 추가](grafana-access.md)
+- 유일한 Host Port: 내부 준비 점검용 Grafana `127.0.0.1:13000`
+  - Prometheus·Tempo·Collector의 외부 도메인·공개 포트 추가 없음
+  - 내부 도구 간 인증·TLS 없음, 공유 학교망 자체를 별도 보안 경계로 간주 금지
 - 미도입: Logstash·Kafka·Object Storage·Node Exporter·cAdvisor·Metrics Generator·Tail Sampling
 
 ## 자원·보존
@@ -92,7 +96,8 @@
 
 ## Dashboard·알림 해석
 
-- Dashboard 상태: Spring·Prediction의 공통 HTTP 집계 구성, 운영 화면 검증 전
+- Dashboard 상태: Spring·Prediction의 공통 HTTP 집계 구성, 운영 HTTP·JVM·CPU 그래프 확인
+  - 일부 화면 확인과 모든 서비스·경로의 검증 완료는 별개
   - 서비스·경로 필터, HTTP p95는 Histogram 노출 이후 표시
   - JVM·CPU·Endpoint 상태에는 서비스 필터만 적용
   - Prediction: OTel HTTP Histogram을 `http_server_requests_seconds_*`로 노출, 수집 시 Label을 `method`·`status`·`uri`로 통일
@@ -196,6 +201,7 @@ ss -ltn | grep -E ":13000[[:space:]]" || true
 - 아래 명령은 최초 도입 또는 원인 확인 뒤의 수동 기동용, 자동배포와 동시 실행 금지
   - 위 사전 확인·Secret 동기화 완료 후 실행, 업무 Container 재생성 없음
   - 이미 실행 중인 도구의 설정 변경 반영은 자동배포 사용, 단순 `up`의 Bind Mount 재로딩 보장 없음
+  - 업무 Compose의 cloudflared 기동과 전용 Network 생성 완료 필요
 - Grafana 시작 시 기존 Telegram 정책도 등록, 실제 서비스 증상 조건 충족 시 전송 가능
 
 ```bash
@@ -209,8 +215,8 @@ curl --disable --fail --silent --show-error --max-time 5 http://127.0.0.1:13000/
 '
 ```
 
-- 로컬 PC: `ssh -N -L 13000:127.0.0.1:13000 <기존 SSH 접속 대상>`
-- 브라우저: `http://127.0.0.1:13000`, 로그인 후 Omagotchi Folder 확인
+- 브라우저: [Grafana 접속 설정](grafana-access.md) 완료 후 `https://grafana.omagotchi.site` 사용
+- 로그인 후 Omagotchi Folder 확인, 평소 조회를 위한 SSH 터널 불필요
 - Data Source 연결 확인, Tempo 조회·Grafana 등록만으로 앱 Trace 수집 완료 판정 금지
 
 ### 3. 서비스 연결

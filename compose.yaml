@@ -529,12 +529,17 @@ services:
         condition: service_healthy
     networks:
       - omagotchi-net
+      - grafana-ingress
     restart: unless-stopped
 
 networks:
   # 같은 네트워크의 컨테이너는 서비스 이름과 내부 포트로 통신
   omagotchi-net:
     name: omagotchi-net
+  # 기존 Tunnel과 Grafana만 공유하는 인입 Network. 관측 저장소 직접 연결 제외.
+  grafana-ingress:
+    name: omagotchi-grafana-net
+    internal: true
 
 volumes:
   learning-community-attachments:

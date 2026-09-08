@@ -9,7 +9,8 @@
 - 메트릭·Collector·Tempo 구성: [메트릭·주요 Span 수집 운영](metrics-tracing.md)
   - Infra 구현과 서비스 계측 연결·운영 검증의 구분
 - 운영 확인 `2026-09-07`: Filebeat → Elasticsearch → Kibana의 일부 서비스 로그 수집 확인
-  - 남은 확인: Rule Engine A/B·Nginx의 수집 Label 반영, 동일 Request ID 조회, Telegram 수신
+- 운영 확인 `2026-09-08`: Telegram 오류 수신·동일 Request ID의 Nginx/Frontend 로그 조회
+  - 이번 링크 개선의 운영 확인과 Rule Engine A/B 조회는 별도 확인
 
 ## 수집·보존 경계
 
@@ -61,7 +62,7 @@
 
 1. Infra 변경의 검토·승격·서버 반영
    - 수집 허용 Label 추가에 따른 앱 Container 재생성 가능성
-   - 기존 순차 배포 절차 유지, Filebeat의 자동 시작 없음
+   - 기존 순차 배포 절차 유지, 최초 로그 저장소 준비 후 Filebeat의 자동 기동·갱신
 2. 읽기 전용 확인: `bash ./scripts/observability-check.sh`
    - URL: `http://10.116.64.14:9200`, 기존 공용 계정 사용
    - 연결 확인·초기화·알림 실행 모두 루트 URL만 허용, 끝의 `/` 유무는 무관
@@ -131,7 +132,7 @@ set -e
 
 - 설정·초기화 실패 시 수집 시작 중단
 - 기존 일반 Index와 이름 충돌 시 자동 삭제 금지
-- Kibana 기존 [Omagotchi Space](http://s4.java21.net:5601/s/aiot3-team5-omagotchi/app/observabilityOnboarding) 유지
+- Kibana 기존 [Omagotchi Discover](http://s4.java21.net:5601/s/aiot3-team5-omagotchi/app/discover) 사용
   - Space ID: `aiot3-team5-omagotchi`, Filebeat 전송 설정과 무관
   - Discover에서 Data View `logs-omagotchi-prod` 생성, 시간 필드 `@timestamp`
   - 최근 정상 요청 뒤 `http.request.id`·`trace.id`·`service.name` 검색
@@ -256,9 +257,22 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
   - 첫 대표 오류 한 건, 같은 그룹 10분 재알림 억제
   - 반복 지속 시 최대 1시간까지 재알림 간격 증가
   - 억제 건수 요약·모든 그룹 합계의 전역 전송량 상한 아님
-- 메시지: 시각·서비스·오류 종류·안전한 요약·경로·Request ID·Trace ID·KQL·Space 링크
+- 메시지: 한국 시각·서비스·HTTP 상태·오류 종류·안전한 요약·경로·Request ID·Trace ID·KQL
   - Stack Trace·Body·Cookie·Token 제외, Markdown/HTML 해석 없음
   - `message`는 앱의 안전한 요약 계약 전제, 임의 문자열의 자동 민감정보 판별 기능 아님
+- 조회 버튼
+  - `요청 로그 보기`: 같은 Request ID의 로그와 발생 전후 5분을 Kibana Discover에서 조회
+    - `logs-omagotchi-prod` 전용 임시 Data view 사용, 기존 Data view ID·추가 환경변수 불필요
+    - 학교 전체 `logs-*` 사용·저장 객체 생성·기존 저장 화면 변경 없음
+    - 서비스·HTTP 상태·처리 시간·오류 종류·메시지 열 표시
+    - Request ID 없이 유효한 Trace ID만 있으면 Trace ID로 로그 검색
+  - `Trace 보기`: Grafana `Omagotchi Tempo`에서 같은 Trace ID·시간 범위 조회
+    - Grafana 브라우저 접속 변경의 Infra 배포·[Cloudflare 설정](grafana-access.md) 완료 후 사용
+    - Cloudflare Access·Grafana 로그인 유지, Sampling·보존 기간에 따른 조회 결과 부재 가능
+  - 잘못된 식별자의 검색식 삽입 금지, Trace ID 부재 시 Trace 버튼 생략
+  - 시각 누락·잘못된 값: 알림 전송 유지, 화면에서 시간 범위 직접 선택 안내
+  - 클릭 시 브라우저의 조회만 수행, 알림 전송기의 Kibana·Grafana 접속·단축 URL 생성 없음
+  - 고정된 과거 시간의 조회도 로그·Trace 보존 기간이 지난 자료의 복구는 불가
 - 전송: HTTPS·Redirect 차단·연결 3초/읽기 5초 Timeout
   - 전송 실패 시 원본 URL·응답·예외 내용 미출력
   - 전송기 내부 재시도 없음, 제품 재시도 대상 기간 10분
@@ -279,7 +293,10 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
 
 ### 확인·중지
 
-- 대표 오류 한 건의 Telegram 수신·KQL 검색 확인
+- 대표 오류 한 건의 Telegram 수신·조회 버튼 확인
+  - Kibana: Request ID·팀 로그·발생 전후 5분·상태와 처리 시간 열 확인
+  - Grafana: Access·로그인 이후 Tempo와 해당 Trace ID 확인
+  - 기존 알림의 자동 변경 없음, Infra 배포 후 새 알림부터 버튼 적용
 - 동일 오류 반복 시 억제·다른 오류 코드의 별도 알림 확인
 - 상태 Alias의 ILM 적용·용량 및 경고 로그 확인
 - 알림이 오지 않을 때: `ps`만으로 정상 판정 금지
@@ -298,6 +315,9 @@ GET /logs-omagotchi-prod,elastalert-omagotchi-status*/_ilm/explain?only_errors=t
 ## 근거
 
 - [ElastAlert2 공식 Alerter 확장](https://elastalert2.readthedocs.io/en/latest/recipes/adding_alerts.html)
+- [Telegram 조회 버튼](https://core.telegram.org/bots/api#inlinekeyboardbutton)
+- [Kibana 8.19.3 Discover Locator](https://github.com/elastic/kibana/blob/v8.19.3/src/platform/plugins/shared/discover/common/app_locator.ts)
+- [Grafana 외부 도구의 Explore URL 생성](https://grafana.com/docs/grafana/latest/visualizations/explore/get-started-with-explore/#generate-explore-urls-from-external-tools)
 - [ElastAlert2 2.31.0 Telegram 전송기](https://github.com/jertel/elastalert2/blob/elastalert2-2.31.0/elastalert/alerters/telegram.py)
 - [ElastAlert2 2.31.0 상태 Mapping·초기화](https://github.com/jertel/elastalert2/blob/elastalert2-2.31.0/elastalert/create_index.py)
 - [ElastAlert2 2.31.0 재시작 조회 범위](https://github.com/jertel/elastalert2/blob/elastalert2-2.31.0/elastalert/elastalert.py)

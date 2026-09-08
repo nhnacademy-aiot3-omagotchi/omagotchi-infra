@@ -260,6 +260,48 @@ fail_and_rollback() {
   exit 1
 }
 
+# 배포 완료 서비스의 오래된 로컬 SHA 이미지 정리.
+# 현재·직전 성공 이미지와 실행·중지 상태 Container의 참조 이미지 보존.
+# 호출 조건: 공용 배포 Lock 보유 및 deploy.env 확정 완료.
+cleanup_service_images() {
+  local target_service="$1"
+  local current_sha="$2"
+  local previous_sha="$3"
+  local repository current_id previous_id images reference image_id containers
+
+  case "${target_service}" in
+  frontend | discovery-service | gateway-service | identity-service | learning-service | rule-service | prediction-service) ;;
+  *) return 1 ;;
+  esac
+  [[ "${current_sha}" =~ ^[0-9a-f]{40}$ && "${previous_sha}" =~ ^[0-9a-f]{40}$ ]] || return 1
+
+  # 같은 SHA 재배포 시 직전의 다른 성공 SHA를 알 수 없으므로 정리 생략.
+  [[ "${current_sha}" != "${previous_sha}" ]] || return 0
+  repository="ghcr.io/nhnacademy-aiot3-omagotchi/omagotchi-${target_service}"
+
+  # 보존 대상 조회 실패 시 삭제 중단. 같은 Image ID의 다른 태그도 보존.
+  current_id="$(docker image inspect --format '{{.Id}}' "${repository}:${current_sha}")" || return 1
+  previous_id="$(docker image inspect --format '{{.Id}}' "${repository}:${previous_sha}")" || return 1
+  [[ "${current_id}" =~ ^sha256:[0-9a-f]{64}$ && "${previous_id}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  images="$(docker image ls --no-trunc --filter "reference=${repository}:*" \
+    --format '{{.Repository}}:{{.Tag}} {{.ID}}')" || return 1
+
+  while read -r reference image_id; do
+    # 정확한 팀 저장소의 SHA 태그만 대상. main·수동 태그·태그 없는 이미지 제외.
+    [[ "${reference%:*}" == "${repository}" && "${reference##*:}" =~ ^[0-9a-f]{40}$ ]] || continue
+    [[ "${image_id}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    [[ "${image_id}" != "${current_id}" && "${image_id}" != "${previous_id}" ]] || continue
+
+    # 다른 프로젝트와 중지된 Container도 포함한 참조 확인.
+    containers="$(docker container ls --all --quiet --filter "ancestor=${image_id}")" || return 1
+    [[ -z "${containers}" ]] || continue
+
+    echo "이전 서비스 이미지 정리: ${reference}"
+    # 태그 단위 삭제. 강제 삭제와 태그 없는 상위 이미지의 연쇄 삭제 제외.
+    docker image rm --no-prune "${reference}" || return 1
+  done <<<"${images}"
+}
+
 deploy_service_main() {
   # 논리 서비스명과 GHCR 이미지 태그로 사용하는 Commit SHA 검증.
   if (($# != 2)); then
@@ -376,6 +418,11 @@ deploy_service_main() {
   candidate=""
 
   echo "배포 완료: ${service} (${sha})"
+
+  # 부가 정리 실패 시 성공한 배포 유지, 다음 새 SHA 배포에서 정리 재시도.
+  if ! cleanup_service_images "${service}" "${sha}" "${old_tag}"; then
+    echo "경고: 이전 이미지 정리 실패. 배포 상태 유지, 정리 결과 확인 필요" >&2
+  fi
 }
 
 # 테스트 source 시 main 미실행, 직접 실행 시에만 실제 배포 시작.
