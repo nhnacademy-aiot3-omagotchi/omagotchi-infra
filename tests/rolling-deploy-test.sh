@@ -217,4 +217,95 @@ if rolling_check_callers learning-service >/dev/null 2>&1; then fail "고정 주
 failure=""
 rolling_check_callers learning-service || fail "호출 주소 전환 완료를 인식하지 못했습니다."
 
+# Given: Registry 편입·제외 확인 중 일시적 조회 실패와 지속 장애.
+(
+  docker() {
+    case "$1" in
+      ps) printf 'caller-container\n' ;;
+      inspect)
+        printf 'inspect\n' >>"${events}"
+        if [[ "${registry_scenario}" == inspect-once && "$(grep -c '^inspect$' "${events}")" == 1 ]]; then return 1; fi
+        printf 'frontend-a\n'
+        ;;
+      *) return 1 ;;
+    esac
+  }
+
+  rolling_registry() {
+    printf 'registry\n' >>"${events}"
+    if [[ "${registry_scenario}" == registry-unavailable ]]; then return 1; fi
+    if [[ "${registry_scenario}" == registry-once && "$(grep -c '^registry$' "${events}")" == 1 ]]; then return 1; fi
+    if [[ "${present}" == true ]]; then
+      printf '{"services":{"IDENTITY-SERVICE":["target","peer"]}}\n'
+    else
+      printf '{"services":{"IDENTITY-SERVICE":["peer"]}}\n'
+    fi
+  }
+
+  # 실제 90초 대기 대신 재확인 시점만 이동, 운영 함수의 제한 시간 유지.
+  sleep() { SECONDS=$((SECONDS + 45)); }
+
+  for present in true false; do
+    for registry_scenario in inspect-once registry-once registry-unavailable; do
+      : >"${events}"
+      # When/Then: 조회 복구 후에만 성공, 지속 장애는 제한 시간 이후 실패.
+      if [[ "${registry_scenario}" == registry-unavailable ]]; then
+        if rolling_wait_clients IDENTITY-SERVICE target "${present}" >/dev/null 2>&1; then
+          fail "Registry 지속 장애의 반영 완료 처리"
+        fi
+        [[ "$(grep -c '^registry$' "${events}")" == 2 ]] || fail "Registry 장애의 제한 시간 내 재확인 누락"
+      else
+        rolling_wait_clients IDENTITY-SERVICE target "${present}" || fail "일시적인 조회 실패 후 재확인 누락"
+        [[ "$(grep -c '^inspect$' "${events}")" == 2 ]] || fail "조회 실패를 재확인 없이 성공 처리"
+      fi
+    done
+  done
+)
+
+# Given: 실제 분배 파일 생성·교체 함수와 Nginx 명령 결과의 대역.
+(
+  rolling_container() { [[ "$1" == nginx ]] && printf 'nginx\n'; }
+  rolling_ready() { [[ "$1" == frontend-a || "$1" == frontend-b ]]; }
+  docker() {
+    [[ "$1" == exec && "$2" == nginx ]] || return 1
+    case "$3 $4" in
+      'nginx -t') [[ "${route_scenario}" != invalid-config ]] ;;
+      'nginx -s')
+        printf 'reload\n' >>"${events}"
+        [[ "${route_scenario}" != reload-failure ]]
+        ;;
+      'sh -c')
+        if [[ -s "${events}" ]]; then printf '202\n'; else printf '101\n'; fi
+        ;;
+      *) return 1 ;;
+    esac
+  }
+
+  for route_scenario in success invalid-config reload-failure; do
+    INFRA_DIR="${TEST_DIRECTORY}/route-${route_scenario}"
+    directory="${INFRA_DIR}/nginx/conf.d/runtime"
+    mkdir -p "${INFRA_DIR}/nginx/conf.d"
+    cp "${SOURCE_INFRA}/nginx/conf.d/default.conf" "${INFRA_DIR}/nginx/conf.d/default.conf"
+    rolling_initialize_routes
+    cp "${directory}/upstreams.conf" "${directory}/upstreams.expected"
+    cp "${directory}/frontend.servers" "${directory}/frontend.expected"
+    : >"${events}"
+
+    # When/Then: 성공 시 새 목록 유지, 후보 검사·Reload 실패 시 직전 두 파일 유지.
+    if [[ "${route_scenario}" == success ]]; then
+      rolling_route frontend frontend-a false || fail "정상 Nginx 분배 목록 적용 실패"
+      ! grep -Fq 'frontend-a:8080' "${directory}/upstreams.conf" || fail "요청 제외 대상의 분배 목록 잔류"
+      [[ "$(cat "${directory}/frontend.servers")" == 'server frontend-b:8080 resolve;' ]] || fail "정상 반대 자리의 분배 목록 유실"
+      [[ ! -e "${directory}/upstreams.previous" && ! -e "${directory}/frontend.previous" ]] || fail "성공 후 복구용 파일 잔류"
+    else
+      if rolling_route frontend frontend-a false >/dev/null 2>&1; then fail "Nginx 실패를 성공 처리"; fi
+      cmp -s "${directory}/upstreams.conf" "${directory}/upstreams.expected" || fail "실패 후 전체 분배 목록 불일치"
+      cmp -s "${directory}/frontend.servers" "${directory}/frontend.expected" || fail "실패 후 서비스 분배 목록 불일치"
+      if [[ "${route_scenario}" == invalid-config ]]; then
+        [[ ! -s "${events}" ]] || fail "잘못된 후보 설정의 Reload 실행"
+      fi
+    fi
+  done
+)
+
 echo "Rolling deployment order and recovery tests passed"

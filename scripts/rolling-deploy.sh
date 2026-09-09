@@ -258,12 +258,19 @@ rolling_wait_clients() {
   while ((SECONDS < deadline)); do
     complete=true
     while read -r container; do
-      target="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${container}")" || return 1
+      if ! target="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${container}")"; then
+        complete=false
+        continue
+      fi
       case "${target}" in
         gateway-service*|frontend*|learning-service*|rule-engine-a|rule-engine-b) ;;
         *) continue ;;
       esac
-      snapshot="$(rolling_registry "${target}")" || return 1
+      # 일시적인 조회 실패는 반영 미완료로 처리, 기존 제한 시간 안에서 재확인.
+      if ! snapshot="$(rolling_registry "${target}")"; then
+        complete=false
+        continue
+      fi
       if ! jq -e --arg app "${application}" --arg id "${instance}" --argjson present "${present}" '
         (.services[$app] // []) as $ids |
         ($ids | length) > 0 and (($ids | index($id) != null) == $present)
@@ -341,9 +348,18 @@ rolling_route() {
   docker exec "${container}" nginx -t -c /etc/nginx/conf.d/runtime/nginx.next || return 1
   old_workers="$(docker exec "${container}" sh -c "ps -o pid,args | awk '/nginx: worker process/ && !/awk/ {print \$1}'")" || return 1
   [[ -n "${old_workers}" ]] || return 1
-  mv -f "${directory}/upstreams.next" "${directory}/upstreams.conf" || return 1
-  mv -f "${directory}/${group}.next" "${directory}/${group}.servers" || return 1
-  docker exec "${container}" nginx -s reload || return 1
+  # 파일 교체·Reload 명령 실패에 대비한 직전 분배 목록과 읽기 권한 보존.
+  cp -p "${directory}/upstreams.conf" "${directory}/upstreams.previous" || return 1
+  cp -p "${directory}/${group}.servers" "${directory}/${group}.previous" || return 1
+  if ! mv -f "${directory}/upstreams.next" "${directory}/upstreams.conf" \
+    || ! mv -f "${directory}/${group}.next" "${directory}/${group}.servers" \
+    || ! docker exec "${container}" nginx -s reload; then
+    mv -f "${directory}/upstreams.previous" "${directory}/upstreams.conf" || echo "Nginx 전체 분배 목록 복구 실패" >&2
+    mv -f "${directory}/${group}.previous" "${directory}/${group}.servers" || echo "Nginx 서비스 분배 목록 복구 실패: ${group}" >&2
+    echo "Nginx 분배 목록 적용 실패. 대상 앱 유지, 파일·실행 설정 확인 필요: ${target}" >&2
+    return 1
+  fi
+  rm -f "${directory}/upstreams.previous" "${directory}/${group}.previous" || return 1
   while ((SECONDS < deadline)); do
     active_workers="$(docker exec "${container}" sh -c "ps -o pid,args | awk '/nginx: worker process/ && !/awk/ {print \$1}'")" || return 1
     [[ -n "${active_workers}" ]] || return 1
