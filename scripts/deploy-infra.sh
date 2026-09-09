@@ -7,10 +7,10 @@ umask 077
 # 처리 순서:
 # 1. 서버 Infra 저장소의 main Fast-forward
 # 2. Compose 설정 검증
-# 3. Discovery 선행 배포와 Eureka Client 재등록 확인
-# 4. Rule Engine A/B 순차 배포와 역할 안정화 확인
-# 5. Nginx·Cloudflare 기동, Nginx 설정 검증·Reload, 외부 Smoke Test
-# 6. 관측성 도구 재생성·연결·준비 상태 확인
+# 3. Discovery 준비와 Nginx 분배 목록·내부 Prediction 경로 반영
+# 4. Rule Engine 순차 배포와 역할 안정화 확인
+# 5. 일반 앱 A/B 순차 교체·외부 Smoke Test
+# 6. Cloudflare 연결과 관측성 도구의 변경 반영·준비 상태 확인
 #
 # 실패 범위:
 # - 실패 즉시 중단과 현재 단계 출력
@@ -42,6 +42,7 @@ SECRET_ENV="${ROOT_DIR}/secrets/prod.env"
 COMPOSE_SCRIPT="${INFRA_DIR}/scripts/compose.sh"
 SMOKE_SCRIPT="${INFRA_DIR}/scripts/smoke-test.sh"
 RULE_ENGINE_SCRIPT="${INFRA_DIR}/scripts/rule-engine.sh"
+ROLLING_DEPLOY_SCRIPT="${INFRA_DIR}/scripts/rolling-deploy.sh"
 OBSERVABILITY_DEPLOY_SCRIPT="${INFRA_DIR}/scripts/deploy-observability.sh"
 LOCK_FILE="${ROOT_DIR}/.omagotchi-deploy.lock"
 DEPLOY_LOCK_WAIT_SECONDS=600
@@ -192,38 +193,52 @@ rule_engine_start() {
   local _env_file="$1"
   local target_service="$2"
 
-  compose up -d --no-deps --wait --wait-timeout 300 "${target_service}"
+  if rolling_ready "${target_service}"; then
+    rolling_drain rule-service "${target_service}" || return 1
+  fi
+  compose up -d --no-deps --wait --wait-timeout 300 "${target_service}" || return 1
+  rolling_admit rule-service "${target_service}"
 }
 
 # Discovery 선행 배포.
 # 새 Registry 기동 전 Client 동시 재기동으로 인한 등록 공백 방지.
 compose up -d --no-deps --wait --wait-timeout 300 discovery-service
-compose up \
-  -d \
-  --no-deps \
-  --wait \
-  --wait-timeout 300 \
-  frontend \
-  gateway-service \
-  identity-service \
-  learning-service \
-  prediction-service
+# shellcheck disable=SC1090
+source "${ROLLING_DEPLOY_SCRIPT}"
+rolling_initialize_routes
+
+# 기존 Nginx의 첫 내부 Prediction 경로 반영. 설정 Reload는 진행 요청 유지.
+compose up -d --no-deps --wait --wait-timeout 300 nginx
+reload_nginx
+
+# 호출자의 고정 주소 해소 후 대상의 단일 이름 제거.
+# Rule → Learning은 Eureka, Learning → Prediction은 내부 Nginx 경로로 먼저 전환.
+rollout_rule_engine_infra "${DEPLOY_ENV}" || {
+  echo "Rule Engine 순차 배포 실패. 일반 앱 전환 중단, A/B 상태 확인 필요" >&2
+  exit 1
+}
+
+# 같은 Lock 아래 서비스별 한 자리씩 교체. Learning의 호출 주소 전환 후 Prediction 교체.
+for application in gateway-service frontend identity-service learning-service prediction-service; do
+  case "${application}" in
+    gateway-service) image_key=GATEWAY_IMAGE_TAG ;;
+    frontend) image_key=FRONTEND_IMAGE_TAG ;;
+    identity-service) image_key=IDENTITY_IMAGE_TAG ;;
+    prediction-service) image_key=PREDICTION_IMAGE_TAG ;;
+    learning-service) image_key=LEARNING_IMAGE_TAG ;;
+  esac
+  rolling_deploy "${application}" "$(rolling_read "${image_key}" "${DEPLOY_ENV}")"
+done
 
 # Container Healthcheck와 별개인 Eureka 등록 상태 확인.
 # Frontend는 Registry 조회만 수행하고 register-with-eureka=false이므로 확인 대상 제외.
-# Prediction은 Eureka에 등록하지 않고 Compose 서비스 이름으로 직접 호출되므로 확인 대상 제외.
+# Prediction은 내부 Nginx 경로로 분배하므로 Eureka 확인 대상 제외.
 wait_eureka_application "${DEPLOY_ENV}" "GATEWAY-SERVICE"
 wait_eureka_application "${DEPLOY_ENV}" "IDENTITY-SERVICE"
 wait_eureka_application "${DEPLOY_ENV}" "LEARNING-SERVICE"
 
-# Compose 정의에서 제거된 이전 단일 rule-service Container 정리.
-# A/B Container의 동시 재생성이 아닌 순차 기동 유지.
-compose up -d --no-deps --remove-orphans discovery-service
-
-rollout_rule_engine_infra "${DEPLOY_ENV}" || {
-  echo "Rule Engine 순차 배포 실패. 일부 인스턴스가 갱신되었을 수 있으므로 A/B 상태와 이미지 태그를 확인하세요." >&2
-  exit 1
-}
+# 첫 전환의 단일 인스턴스는 해당 서비스 전환 성공 후에만 정리.
+# 전체 remove-orphans에 의한 정상 인스턴스 조기 삭제 금지.
 
 # 내부 서비스 검증 완료 이후 외부 진입점 반영.
 compose up -d --no-deps --wait --wait-timeout 300 nginx cloudflared

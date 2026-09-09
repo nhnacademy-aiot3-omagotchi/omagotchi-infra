@@ -102,7 +102,7 @@ for failure in inspect list containers remove; do
   [[ ! -s "${deleted_file}" ]] || fail "조회·삭제 실패 이후 삭제가 진행됐습니다: ${failure}"
 done
 
-# 실제 배포 진입점 검증. Container 조작만 대역 처리, 상태 파일 갱신은 실제 수행.
+# 실제 배포 진입점의 성공 이후 정리 검증. 슬롯별 실패 복구는 rolling-deploy-test.sh 담당.
 DEPLOY_ENV="${TEST_TMP_DIR}/deploy.env"
 SECRET_ENV="${TEST_TMP_DIR}/prod.env"
 ROOT_DIR="${TEST_TMP_DIR}"
@@ -112,31 +112,20 @@ touch "${SECRET_ENV}"
 events_file="${TEST_TMP_DIR}/events"
 output_file="${TEST_TMP_DIR}/output"
 failure=""
+SCRIPT_DIR="${TEST_TMP_DIR}/scripts"
+mkdir -p "${SCRIPT_DIR}"
+cat >"${SCRIPT_DIR}/rolling-deploy.sh" <<'EOF'
+rolling_initialize_routes() { :; }
+rolling_read() { read_env "$@"; }
+rolling_deploy() {
+  printf 'rolling\n' >>"${events_file}"
+  [[ "${failure}" != rolling ]] || return 1
+  printf 'FRONTEND_IMAGE_TAG=%s\nSMOKE_BASE_URL=https://example.invalid\n' "$2" >"${DEPLOY_ENV}"
+}
+EOF
 
 acquire_deploy_lock() {
   printf 'lock\n' >>"${events_file}"
-}
-
-compose() {
-  [[ "${failure}" != pull || "$2" != pull ]]
-}
-
-start_service() {
-  printf 'health\n' >>"${events_file}"
-  [[ "${failure}" != health ]]
-}
-
-reload_nginx() {
-  [[ "${failure}" != reload ]]
-}
-
-rollback() {
-  printf 'rollback\n' >>"${events_file}"
-}
-
-mv() {
-  [[ "${failure}" != state ]] || return 1
-  command mv "$@"
 }
 
 cleanup_service_images() {
@@ -145,14 +134,10 @@ cleanup_service_images() {
   [[ "${failure}" != cleanup ]]
 }
 
-for failure in none pull health reload smoke state cleanup; do
+for failure in none rolling cleanup; do
   printf 'FRONTEND_IMAGE_TAG=%s\nSMOKE_BASE_URL=https://example.invalid\n' \
     "${previous_sha}" >"${DEPLOY_ENV}"
   : >"${events_file}"
-  SMOKE_SCRIPT="${COMPOSE_SCRIPT}"
-  if [[ "${failure}" == smoke ]]; then
-    SMOKE_SCRIPT="$(type -P false)"
-  fi
 
   # errexit 동작 보존을 위해 조건문 밖의 자식 Shell에서 배포 수행.
   set +e
@@ -164,10 +149,10 @@ for failure in none pull health reload smoke state cleanup; do
     [[ "${result}" == 0 ]] || fail "정상 배포 또는 정리 실패가 배포 실패로 처리됐습니다: ${failure}"
     [[ "$(read_env FRONTEND_IMAGE_TAG "${DEPLOY_ENV}")" == "${current_sha}" ]] ||
       fail "성공한 배포의 SHA가 확정되지 않았습니다."
-    expected="$(printf 'lock\nhealth\ncleanup:frontend %s %s:%s' \
+    expected="$(printf 'lock\nrolling\ncleanup:frontend %s %s:%s' \
       "${current_sha}" "${previous_sha}" "${current_sha}")"
     [[ "$(<"${events_file}")" == "${expected}" ]] ||
-      fail "배포 Lock·Healthcheck·상태 확정 후 정리 순서 또는 Rollback 생략 오류."
+      fail "배포 Lock·A/B 교체 성공·상태 확정 후 정리 순서 오류."
     if [[ "${failure}" == cleanup ]]; then
       grep -Fq '경고: 이전 이미지 정리 실패' "${output_file}" || fail "정리 실패 경고 누락."
     fi

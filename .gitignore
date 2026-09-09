@@ -43,3 +43,5 @@ tmp/
 *.bak
 *.orig
 *.rej
+nginx/conf.d/runtime/
+.rollout/

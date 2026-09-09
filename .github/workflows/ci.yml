@@ -40,6 +40,7 @@ jobs:
         run: |
           docker run --rm \
             --mount type=bind,src="${PWD}/nginx/conf.d",dst=/etc/nginx/conf.d,readonly \
+            --mount type=bind,src="${PWD}/nginx/upstreams.example.conf",dst=/etc/nginx/conf.d/runtime/upstreams.conf,readonly \
             nginx:1.30.3-alpine nginx -t
 
       - name: Test deployment scripts
@@ -53,6 +54,7 @@ jobs:
         shell: bash
         run: |
           docker compose \
+            --profile rollout \
             --env-file .env.prod.example \
             --env-file deploy.env.example \
             config --quiet

@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+TEST_DIRECTORY="$(mktemp -d)"
+trap 'rm -rf -- "${TEST_DIRECTORY}"' EXIT
+SOURCE_INFRA="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck disable=SC1091
+source "${SOURCE_INFRA}/scripts/rolling-deploy.sh"
+
+INFRA_DIR="${TEST_DIRECTORY}/infra"
+DEPLOY_ENV="${INFRA_DIR}/deploy.env"
+SMOKE_SCRIPT="${TEST_DIRECTORY}/smoke.sh"
+mkdir -p "${INFRA_DIR}/.rollout" "${TEST_DIRECTORY}/containers"
+printf '#!/usr/bin/env bash\nexit 0\n' >"${SMOKE_SCRIPT}"
+chmod +x "${SMOKE_SCRIPT}"
+old=1111111111111111111111111111111111111111
+new=2222222222222222222222222222222222222222
+events="${TEST_DIRECTORY}/events"
+failure=""
+
+fail() { echo "$1" >&2; exit 1; }
+
+rolling_container() {
+  [[ ! -f "${TEST_DIRECTORY}/containers/$1" ]] || printf '%s\n' "$1"
+}
+
+rolling_ready() {
+  if [[ "$1" == discovery-service ]]; then [[ "${failure}" != discovery ]]; return; fi
+  [[ -f "${TEST_DIRECTORY}/containers/$1" ]]
+}
+
+rolling_compose() {
+  local env_file="$1" target revision count
+  shift
+  printf 'compose:%s\n' "$*" >>"${events}"
+  if [[ "$1" == rm ]]; then rm -f "${TEST_DIRECTORY}/containers/${*: -1}"; fi
+  [[ -f "${env_file}" ]] || return 1
+  if [[ "$1" == up ]]; then
+    target="${*: -1}"
+    revision="$(rolling_read "IDENTITY_$(printf '%s' "${target##*-}" | tr '[:lower:]' '[:upper:]')_IMAGE_TAG" "${env_file}")"
+    printf 'start:%s:%s\n' "${target}" "${revision}" >>"${events}"
+    if [[ "${failure}" == "start:${target}" && "${revision}" == "${new}" ]]; then
+      rm -f "${TEST_DIRECTORY}/containers/${target}"
+      return 1
+    fi
+    printf '%s\n' "${revision}" >"${TEST_DIRECTORY}/containers/${target}"
+    count="$(find "${TEST_DIRECTORY}/containers" -type f | wc -l | tr -d ' ')"
+    ((count <= 2)) || fail "교체 중 세 번째 인스턴스 생성"
+  fi
+}
+
+rolling_drain() {
+  printf 'drain:%s\n' "$2" >>"${events}"
+  [[ "${failure}" != "drain:$2" ]] || return 1
+  if [[ "${failure}" == "rollback-drain:$2" ]]; then
+    [[ "$(cat "${TEST_DIRECTORY}/containers/$2")" != "${new}" ]]
+  fi
+}
+
+rolling_admit() {
+  printf 'admit:%s\n' "$2" >>"${events}"
+  [[ -f "${TEST_DIRECTORY}/containers/$2" ]]
+}
+
+# 실제 rolling_start 유지, 기동 후 준비 검사 결과만 대체.
+rolling_wait_ready() {
+  if [[ "$(cat "${TEST_DIRECTORY}/containers/$1")" == "${new}" ]]; then
+    case "${failure}" in
+      readiness:"$1"|rollback-drain:"$1"|inspect:"$1"|restarting:"$1") return 1 ;;
+    esac
+  fi
+}
+
+docker() {
+  local target="${*: -1}"
+  [[ "$1" == inspect ]] || return 1
+  case "$3" in
+    '{{.Config.Image}}') printf 'fixture:%s\n' "$(cat "${TEST_DIRECTORY}/containers/${target}")" ;;
+    '{{.State.Status}}')
+      [[ "${failure}" != "inspect:${target}" ]] || return 1
+      if [[ "${failure}" == "restarting:${target}" ]]; then printf 'restarting\n'; else printf 'running\n'; fi
+      ;;
+    *) [[ "${failure}" == old-caller ]] || printf 'true\n' ;;
+  esac
+}
+
+reset_case() {
+  rm -f "${TEST_DIRECTORY}/containers/identity-service" \
+    "${TEST_DIRECTORY}/containers/identity-service-a" "${TEST_DIRECTORY}/containers/identity-service-b" \
+    "${INFRA_DIR}/.rollout/identity-service.state" "${INFRA_DIR}/.rollout/identity-service.state.env"
+  printf 'IDENTITY_IMAGE_TAG=%s\nSMOKE_BASE_URL=https://example.invalid\n' "${old}" >"${DEPLOY_ENV}"
+  printf '%s\n' "${old}" >"${TEST_DIRECTORY}/containers/identity-service-a"
+  printf '%s\n' "${old}" >"${TEST_DIRECTORY}/containers/identity-service-b"
+  : >"${events}"
+  failure=""
+  SMOKE_SCRIPT="${TEST_DIRECTORY}/smoke.sh"
+}
+
+# Given/When: 평소 A/B 두 개를 한 자리씩 교체.
+reset_case
+rolling_deploy identity-service "${new}" >/dev/null
+# Then: 모두 검증한 뒤에만 논리 서비스의 성공 SHA 확정.
+[[ "$(rolling_read IDENTITY_IMAGE_TAG "${DEPLOY_ENV}")" == "${new}" ]] || fail "성공 SHA 미확정"
+[[ "$(grep -E '^(drain|start|admit):' "${events}")" == "drain:identity-service-a
+start:identity-service-a:${new}
+admit:identity-service-a
+drain:identity-service-b
+start:identity-service-b:${new}
+admit:identity-service-b" ]] || fail "한 자리씩 제외·기동·복귀 순서 위반"
+
+# Given/When: 각 슬롯의 새 이미지 기동 실패.
+for slot in a b; do
+  reset_case
+  failure="start:identity-service-${slot}"
+  if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then fail "새 버전 기동 실패를 성공 처리"; fi
+  # Then: 실패한 자리만 복구, 완료되지 않은 논리 SHA 유지.
+  grep -Fq "start:identity-service-${slot}:${old}" "${events}" || fail "실패 슬롯 복구 누락"
+  [[ "$(rolling_read IDENTITY_IMAGE_TAG "${DEPLOY_ENV}")" == "${old}" ]] || fail "부분 성공의 전체 성공 처리"
+  if [[ "${slot}" == a ]]; then
+    ! grep -Fq 'start:identity-service-b:' "${events}" || fail "첫 자리 실패 후 반대 자리 변경"
+  else
+    [[ "$(rolling_read IDENTITY_A_IMAGE_TAG "${DEPLOY_ENV}")" == "${new}" ]] || fail "이미 성공한 A 상태 유실"
+  fi
+done
+
+# Given/When: 새 컨테이너 실행 후 준비 검사 실패.
+for scenario in readiness rollback-drain inspect restarting; do
+  reset_case
+  failure="${scenario}:identity-service-a"
+  if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then fail "준비 검사 실패를 성공 처리"; fi
+  # Then: 실행 중인 새 컨테이너 제외 확인 후에만 복구. 확인 불가 시 실행·진행 기록 유지.
+  if [[ "${scenario}" == readiness ]]; then
+    [[ "$(grep -E '^(drain|start|admit):' "${events}")" == "drain:identity-service-a
+start:identity-service-a:${new}
+drain:identity-service-a
+start:identity-service-a:${old}
+admit:identity-service-a" ]] || fail "준비 검사 실패 후 새 실행을 제외하지 않고 복구"
+    [[ ! -e "${INFRA_DIR}/.rollout/identity-service.state" ]] || fail "복구 완료 후 미완료 기록 잔류"
+  else
+    ! grep -Fq "start:identity-service-a:${old}" "${events}" || fail "실행 상태·요청 제외 확인 실패 후 강제 복구"
+    [[ "$(cat "${TEST_DIRECTORY}/containers/identity-service-a")" == "${new}" ]] || fail "확인 중인 새 실행 제거"
+    [[ -s "${INFRA_DIR}/.rollout/identity-service.state" && -s "${INFRA_DIR}/.rollout/identity-service.state.env" ]] || fail "복구 판단용 기록 유실"
+  fi
+  [[ "$(rolling_read IDENTITY_IMAGE_TAG "${DEPLOY_ENV}")" == "${old}" ]] || fail "미완료 배포의 성공 SHA 기록"
+  ! grep -Fq 'start:identity-service-b:' "${events}" || fail "복구 중 반대 자리 변경"
+done
+
+# Given/When: 기동은 성공했지만 외부 공개 경로 검사 실패.
+reset_case
+SMOKE_SCRIPT="$(type -P false)"
+if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then fail "공개 경로 오류의 배포 성공 처리"; fi
+# Then: 첫 자리 복구, 반대 자리 교체 금지.
+grep -Fq "start:identity-service-a:${old}" "${events}" || fail "공개 경로 실패 후 복구 누락"
+! grep -Fq 'start:identity-service-b:' "${events}" || fail "공개 경로 오류 후 반대 자리 교체"
+
+# Given/When: 호출자 반영 확인 실패.
+reset_case
+failure=drain:identity-service-a
+if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then fail "요청 제외 실패를 성공 처리"; fi
+# Then: 기존 실행 유지, 새 기동 금지.
+! grep -q '^start:' "${events}" || fail "요청 제외 확인 전 기존 실행 교체"
+
+# Given/When: 비정상 종료의 미완료 기록.
+reset_case
+printf 'stage=replacing\n' >"${INFRA_DIR}/.rollout/identity-service.state"
+if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then fail "미완료 상태 무시"; fi
+# Then: 원인 확인 전 추가 Container 변경 금지.
+[[ ! -s "${events}" ]] || fail "미완료 배포를 확인하기 전 변경 실행"
+
+# Given/When: 한쪽 사전 장애.
+reset_case
+rm "${TEST_DIRECTORY}/containers/identity-service-b"
+if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then fail "한쪽 장애 중 정상 슬롯 교체 허용"; fi
+[[ ! -s "${events}" ]] || fail "건강한 반대 슬롯 확인 전 변경 실행"
+
+# Given/When: Discovery 장애 중 배포 요청.
+reset_case
+failure=discovery
+if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then fail "Discovery 장애 중 배포 허용"; fi
+[[ ! -s "${events}" ]] || fail "Discovery 장애 중 Container 변경 실행"
+
+# Given/When: 단일 실행에서 A/B로 첫 전환.
+reset_case
+rm "${TEST_DIRECTORY}/containers/identity-service-a" "${TEST_DIRECTORY}/containers/identity-service-b"
+printf '%s\n' "${old}" >"${TEST_DIRECTORY}/containers/identity-service"
+rolling_deploy identity-service "${new}" >/dev/null
+# Then: 새 A 준비 뒤 단일 종료, 두 실행을 초과하지 않는 B 생성.
+[[ ! -f "${TEST_DIRECTORY}/containers/identity-service" ]] || fail "기존 단일 실행의 종료 누락"
+[[ -f "${TEST_DIRECTORY}/containers/identity-service-a" && -f "${TEST_DIRECTORY}/containers/identity-service-b" ]] || fail "A/B 전환 누락"
+
+# Given/When: 첫 전환에서 A 또는 B 기동 실패.
+for slot in a b; do
+  reset_case
+  rm "${TEST_DIRECTORY}/containers/identity-service-a" "${TEST_DIRECTORY}/containers/identity-service-b"
+  printf '%s\n' "${old}" >"${TEST_DIRECTORY}/containers/identity-service"
+  failure="start:identity-service-${slot}"
+  if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then fail "첫 전환 실패를 성공 처리"; fi
+  # Then: 전체 성공 처리·단일 구성 자동 복귀 없이, 정상 실행과 복구 판단용 기록 유지.
+  [[ "$(rolling_read IDENTITY_IMAGE_TAG "${DEPLOY_ENV}")" == "${old}" ]] || fail "실패한 첫 전환의 성공 SHA 기록"
+  [[ -s "${INFRA_DIR}/.rollout/identity-service.state" ]] || fail "첫 전환 실패 기록 유실"
+  if [[ "${slot}" == a ]]; then
+    [[ -f "${TEST_DIRECTORY}/containers/identity-service" ]] || fail "새 A 준비 전 단일 실행 제거"
+    ! grep -Fq 'start:identity-service-b:' "${events}" || fail "새 A 실패 후 B 생성"
+  else
+    [[ "$(cat "${TEST_DIRECTORY}/containers/identity-service-a")" == "${new}" ]] || fail "B 실패 후 정상 A 유실"
+    [[ ! -f "${TEST_DIRECTORY}/containers/identity-service" ]] || fail "B 실패 후 단일 구성 자동 복귀"
+  fi
+done
+
+# Given/When: 호출자의 고정 주소가 남은 첫 전환.
+printf '%s\n' "${old}" >"${TEST_DIRECTORY}/containers/rule-engine-a"
+printf '%s\n' "${old}" >"${TEST_DIRECTORY}/containers/rule-engine-b"
+failure="old-caller"
+if rolling_check_callers learning-service >/dev/null 2>&1; then fail "고정 주소 호출자를 남긴 단일 실행 제거 허용"; fi
+# Then: 두 호출자 모두 새 주소로 전환한 경우에만 허용.
+failure=""
+rolling_check_callers learning-service || fail "호출 주소 전환 완료를 인식하지 못했습니다."
+
+echo "Rolling deployment order and recovery tests passed"
