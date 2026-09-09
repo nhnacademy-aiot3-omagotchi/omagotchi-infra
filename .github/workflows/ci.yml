@@ -26,7 +26,10 @@ jobs:
 
       - name: Validate shell scripts
         shell: bash
-        run: bash -n scripts/*.sh tests/*.sh
+        run: |
+          for script in scripts/*.sh tests/*.sh; do
+            bash -n "$script"
+          done
 
       - name: Lint shell scripts
         shell: bash
@@ -36,7 +39,8 @@ jobs:
         shell: bash
         run: |
           docker run --rm \
-            --mount type=bind,src="${PWD}/nginx/conf.d",dst=/etc/nginx/conf.d,readonly \
+            --mount type=bind,src="${PWD}/nginx/conf.d/default.conf",dst=/etc/nginx/conf.d/default.conf,readonly \
+            --mount type=bind,src="${PWD}/nginx/upstreams.example.conf",dst=/etc/nginx/conf.d/runtime/upstreams.conf,readonly \
             nginx:1.30.3-alpine nginx -t
 
       - name: Test deployment scripts
@@ -50,6 +54,8 @@ jobs:
         shell: bash
         run: |
           docker compose \
+            --profile rollout \
+            --profile legacy \
             --env-file .env.prod.example \
             --env-file deploy.env.example \
             config --quiet

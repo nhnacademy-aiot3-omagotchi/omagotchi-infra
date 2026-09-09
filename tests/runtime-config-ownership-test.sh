@@ -80,6 +80,7 @@ grep -oE '\$\{[A-Z][A-Z0-9_]*' "${INFRA_DIR}/compose.yaml" \
 {
   cat "${runtime_keys_file}"
   grep -v '^SMOKE_BASE_URL$' "${deploy_keys_file}"
+  read_array_keys slot_keys
 } | LC_ALL=C sort -u >"${owned_compose_keys_file}"
 
 assert_same_keys "${owned_compose_keys_file}" "${compose_keys_file}" \
@@ -87,6 +88,7 @@ assert_same_keys "${owned_compose_keys_file}" "${compose_keys_file}" \
 
 if grep -nE '\$\{[A-Z][A-Z0-9_]*(:-|-)' "${INFRA_DIR}/compose.yaml" \
   | grep -vE '\$\{(TRACING_EXPORT_ENABLED|TRACING_SAMPLING_PROBABILITY):-' \
+  | grep -vE '\$\{(FRONTEND|GATEWAY|IDENTITY|LEARNING|PREDICTION)_[AB]_IMAGE_TAG:-' \
   >"${TEST_TMP_DIR}/compose-defaults"; then
   cat "${TEST_TMP_DIR}/compose-defaults" >&2
   fail "운영 Compose 환경변수에 암묵적 기본값이 남아 있습니다."
@@ -95,6 +97,10 @@ fi
 while IFS= read -r expression; do
   # 기존 배포와 호환되는 관측 선택값만 기본값 허용.
   if [[ "${expression}" =~ ^\$\{(TRACING_EXPORT_ENABLED|TRACING_SAMPLING_PROBABILITY):-.*\}$ ]]; then
+    continue
+  fi
+  # 첫 전환의 슬롯 상태가 없을 때만 기존 논리 SHA 사용. 실제 해석은 Compose 계약 테스트 담당.
+  if [[ "${expression}" =~ ^\$\{(FRONTEND|GATEWAY|IDENTITY|LEARNING|PREDICTION)_[AB]_IMAGE_TAG:-\$\{ ]]; then
     continue
   fi
   if [[ ! "${expression}" =~ ^\$\{[A-Z][A-Z0-9_]*(:\?|\?).*\}$ ]]; then
@@ -119,7 +125,7 @@ fi
 if ! TRACING_EXPORT_ENABLED=true TRACING_SAMPLING_PROBABILITY=1 \
   DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${candidate_env}" \
   "${INFRA_DIR}/scripts/compose.sh" config --format json \
-  | jq -e '.services["gateway-service"].environment
+  | jq -e '.services["gateway-service-a"].environment
       | .TRACING_EXPORT_ENABLED == "false" and .TRACING_SAMPLING_PROBABILITY == "0.1"' >/dev/null; then
   fail "호출 Shell의 관측 설정이 운영 설정에 혼입되었습니다."
 fi
@@ -178,9 +184,9 @@ printf 'LOGIN_MAXIMUM_FAILED_ATTEMPTS=9\nLOGIN_LOCK_DURATION=PT20M\nSESSION_TIME
 if ! DEPLOY_ENV_FILE="${deploy_env}" SECRET_ENV_FILE="${candidate_env}" \
   "${INFRA_DIR}/scripts/compose.sh" config --format json \
   | jq -e '
-      .services["identity-service"].environment.LOGIN_MAXIMUM_FAILED_ATTEMPTS == null
-      and .services["identity-service"].environment.LOGIN_LOCK_DURATION == null
-      and .services.frontend.environment.SESSION_TIMEOUT == null
+      .services["identity-service-a"].environment.LOGIN_MAXIMUM_FAILED_ATTEMPTS == null
+      and .services["identity-service-a"].environment.LOGIN_LOCK_DURATION == null
+      and .services["frontend-a"].environment.SESSION_TIMEOUT == null
     ' >/dev/null; then
   fail "서비스로 이관한 정책값이 이전 prod.env에서 다시 주입되었습니다."
 fi

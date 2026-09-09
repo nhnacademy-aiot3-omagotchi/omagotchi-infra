@@ -123,6 +123,27 @@ deploy_keys=(
   SMOKE_BASE_URL
 )
 
+# 첫 전환 전에는 없는 선택 상태, 각 슬롯 교체 시 배포 Script에서 기록
+slot_keys=(
+  FRONTEND_A_IMAGE_TAG
+  FRONTEND_B_IMAGE_TAG
+  GATEWAY_A_IMAGE_TAG
+  GATEWAY_B_IMAGE_TAG
+  IDENTITY_A_IMAGE_TAG
+  IDENTITY_B_IMAGE_TAG
+  LEARNING_A_IMAGE_TAG
+  LEARNING_B_IMAGE_TAG
+  PREDICTION_A_IMAGE_TAG
+  PREDICTION_B_IMAGE_TAG
+)
+
+for key in "${slot_keys[@]}"; do
+  if grep -Eq "^[[:space:]]*${key}=" "${SECRET_ENV_FILE}"; then
+    echo "${key}는 prod.env가 아니라 deploy.env에 두어야 합니다." >&2
+    exit 1
+  fi
+done
+
 for key in "${deploy_keys[@]}"; do
   if ! grep -Eq "^[[:space:]]*${key}=" "${DEPLOY_ENV_FILE}"; then
     echo "deploy.env에 필수 배포 상태가 없습니다: ${key}" >&2
@@ -136,13 +157,14 @@ for key in "${deploy_keys[@]}"; do
 done
 
 # Compose 환경변수 우선순위에 따른 호출 셸 export 값의 혼입 차단.
-unset "${runtime_keys[@]}" "${optional_runtime_keys[@]}" "${deploy_keys[@]}"
+unset "${runtime_keys[@]}" "${optional_runtime_keys[@]}" "${deploy_keys[@]}" "${slot_keys[@]}"
 
 cd "${INFRA_DIR}"
 
 # 검증을 통과한 두 파일만 사용하는 실제 Compose 실행.
 # exec 사용 목적: Wrapper Process를 남기지 않는 신호·종료 코드 전달.
 exec docker compose \
+  --profile rollout \
   --env-file "${SECRET_ENV_FILE}" \
   --env-file "${DEPLOY_ENV_FILE}" \
   "$@"

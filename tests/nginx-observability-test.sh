@@ -107,6 +107,7 @@ docker run --detach --rm \
   --publish "127.0.0.1::80" \
   --tmpfs /var/log/nginx:size=10m,mode=0700 \
   --mount "type=bind,src=${NGINX_CONFIG},dst=/etc/nginx/conf.d/default.conf,readonly" \
+  --mount "type=bind,src=${INFRA_DIR}/nginx/upstreams.example.conf,dst=/etc/nginx/conf.d/runtime/upstreams.conf,readonly" \
   "${NGINX_IMAGE}" >/dev/null
 
 PROXY_PORT="$(
