@@ -5,10 +5,10 @@ umask 077
 # 서비스별 이미지 교체 진입점.
 #
 # 핵심 불변 조건:
-# - deploy.env의 기존 SHA: 현재 확정 상태이자 Rollback 기준
-# - 임시 candidate 파일의 새 SHA: 검증 중인 미확정 상태
-# - Healthcheck·등록·Smoke Test 전체 성공 이후에만 deploy.env 교체
-# - Rule 논리 서비스 1개: 실제 Container 2개의 순차 교체
+# - 일반 앱: rolling_deploy로 A/B 순차 교체, 검증을 마친 슬롯별 SHA 기록
+# - 일반 앱의 논리 SHA: A/B 전체 성공 후 확정
+# - Rule·Discovery: 후보 파일로 배포·검증, 전체 성공 후 deploy.env 교체
+# - Rule: 기존 ACTIVE/STANDBY 순서 유지, 두 Container의 동시 교체 금지
 
 # Infra 저장소와 저장소 외부 운영 파일의 기준 경로.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -89,6 +89,10 @@ start_service() {
   local env_file="$1"
   local target_service="$2"
 
+  # Rule의 ACTIVE/STANDBY 교체 순서는 유지, HTTP 요청 대상만 먼저 제외.
+  if [[ "${target_service}" == rule-engine-* ]] && rolling_ready "${target_service}"; then
+    rolling_drain rule-service "${target_service}" || return 1
+  fi
   compose "${env_file}" up \
     -d \
     --no-deps \
@@ -96,19 +100,10 @@ start_service() {
     --pull never \
     --wait \
     --wait-timeout 180 \
-    "${target_service}"
-}
-
-# Frontend·Gateway Container IP 변경 시 Nginx Upstream 재해석.
-# 그 외 서비스: Nginx Upstream 직접 참조 대상이 아니므로 생략.
-reload_nginx() {
-  if [[ "${service}" != "frontend" && "${service}" != "gateway-service" ]]; then
-    return 0
+    "${target_service}" || return 1
+  if [[ "${target_service}" == rule-engine-* ]]; then
+    rolling_admit rule-service "${target_service}" || return 1
   fi
-
-  # 배포 Script의 표준 입력과 Container 명령 입력의 분리.
-  compose "$1" exec -T --interactive=false nginx nginx -t
-  compose "$1" exec -T --interactive=false nginx nginx -s reload
 }
 
 # Discovery 교체 완료 조건.
@@ -224,7 +219,7 @@ deploy_rule_service() {
   wait_rule_engine_cluster "${candidate}" || fail_and_rollback "Rule Engine exactly-one-ACTIVE 검증 실패"
 }
 
-# 일반 서비스 Rollback 또는 Rule 전용 Rollback 위임.
+# Discovery 복구 또는 Rule 전용 복구 위임. 일반 앱의 복구는 rolling_deploy의 담당.
 rollback() {
   if [[ "${service}" == "rule-service" ]]; then
     rollback_rule_service
@@ -238,11 +233,7 @@ rollback() {
     start_service "${DEPLOY_ENV}" "${service}" || return 1
   fi
 
-  if [[ "${service}" == "discovery-service" ]]; then
-    wait_discovery_clients "${DEPLOY_ENV}" || return 1
-  fi
-
-  reload_nginx "${DEPLOY_ENV}" || return 1
+  wait_discovery_clients "${DEPLOY_ENV}" || return 1
   "${SMOKE_SCRIPT}" "${base_url}"
 }
 
@@ -360,6 +351,20 @@ deploy_service_main() {
     "${DEPLOY_LOCK_WAIT_SECONDS}" \
     "서비스 배포: ${service}" || exit 1
 
+  # shellcheck disable=SC1091
+  source "${SCRIPT_DIR}/rolling-deploy.sh"
+
+  if [[ "${service}" != rule-service && "${service}" != discovery-service ]]; then
+    # 전체 Infra 배포와 같은 교체 함수 사용, 내부 함수의 중복 Lock 획득 제외.
+    rolling_initialize_routes || exit 1
+    old_tag="$(rolling_read "${tag_var}" "${DEPLOY_ENV}")"
+    rolling_deploy "${service}" "${sha}" || return 1
+    if ! cleanup_service_images "${service}" "${sha}" "${old_tag}"; then
+      echo "경고: 이전 이미지 정리 실패. 성공한 A/B 배포 상태 유지" >&2
+    fi
+    return
+  fi
+
   old_tag="$(read_env "${tag_var}" "${DEPLOY_ENV}")"
   base_url="$(read_env SMOKE_BASE_URL "${DEPLOY_ENV}")"
   # Rule Rollback 범위와 물리 인스턴스 순서의 실행 중 상태 기록.
@@ -402,12 +407,9 @@ deploy_service_main() {
 
     start_service "${candidate}" "${service}" || fail_and_rollback "컨테이너 healthcheck 실패"
 
-    if [[ "${service}" == "discovery-service" ]]; then
-      wait_discovery_clients "${candidate}" || fail_and_rollback "Discovery Client 재등록 실패"
-    fi
+    wait_discovery_clients "${candidate}" || fail_and_rollback "Discovery Client 재등록 실패"
   fi
 
-  reload_nginx "${candidate}" || fail_and_rollback "Nginx reload 실패"
   "${SMOKE_SCRIPT}" "${base_url}" || fail_and_rollback "Smoke Test 실패"
 
   # 모든 검증 성공 이후 후보 상태의 확정.

@@ -15,15 +15,15 @@ scrape_configs:
   - job_name: spring-services
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: [gateway-service:8080]
+      - targets: [gateway-service-a:8080, gateway-service-b:8080]
         labels: {service: gateway-service}
       - targets: [rule-engine-a:8080, rule-engine-b:8080]
         labels: {service: rule-service}
-      - targets: [identity-service:8080]
+      - targets: [identity-service-a:8080, identity-service-b:8080]
         labels: {service: identity-service}
-      - targets: [learning-service:8080]
+      - targets: [learning-service-a:8080, learning-service-b:8080]
         labels: {service: learning-service}
-      - targets: [frontend:8080]
+      - targets: [frontend-a:8080, frontend-b:8080]
         labels: {service: frontend}
       - targets: [discovery-service:8761]
         labels: {service: discovery-service}
@@ -37,7 +37,7 @@ scrape_configs:
   - job_name: prediction-service
     metrics_path: /metrics
     static_configs:
-      - targets: [prediction-service:8080]
+      - targets: [prediction-service-a:8080, prediction-service-b:8080]
         labels: {service: prediction-service}
     metric_relabel_configs:
       - source_labels: [__name__]

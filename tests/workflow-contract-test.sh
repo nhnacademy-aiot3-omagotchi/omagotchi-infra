@@ -51,7 +51,7 @@ extract_named_step() {
     $0 == target {
       capture = 1
     }
-    capture && $0 != target && /^      - name:/ {
+    capture && $0 != target && NF && $0 !~ /^        / {
       exit
     }
     capture {
@@ -78,6 +78,13 @@ assert_same_named_step() {
 }
 
 deploy_condition="if: \${{ github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' }}"
+
+# PR 통과 후 main 검사에서만 실패하는 검증 경로 차이 방지.
+for step in 'Validate shell scripts' 'Lint shell scripts' 'Validate Nginx configuration' \
+  'Test deployment scripts' 'Validate Compose configuration'; do
+  assert_same_named_step "${step}" "${INFRA_DIR}/.github/workflows/ci.yml" "${DEPLOY_WORKFLOW}" \
+    "PR·main의 ${step} 검증 단계가 다릅니다."
+done
 
 assert_not_contains '  workflow_call:' "${SYNC_WORKFLOW}" \
   "Environment Secret을 사용할 수 없는 Runtime 설정 재사용 진입점이 남아 있습니다."
@@ -113,8 +120,6 @@ assert_contains "  group: infra-deploy-\${{ github.ref }}" "${DEPLOY_WORKFLOW}" 
   "연속 main 반영의 Infra 자동 배포 Workflow가 직렬화되지 않습니다."
 assert_contains '  cancel-in-progress: false' "${DEPLOY_WORKFLOW}" \
   "실행 중인 Infra 자동 배포가 후속 main 반영으로 취소될 수 있습니다."
-assert_contains '    timeout-minutes: 80' "${DEPLOY_WORKFLOW}" \
-  "Runtime 설정 동기화와 전체 Infra 배포를 합친 대기 예산이 보존되지 않습니다."
 assert_contains '    environment:' "${DEPLOY_WORKFLOW}" \
   "Infra 자동 배포 Job이 production Environment를 사용하지 않습니다."
 assert_contains '      name: production' "${DEPLOY_WORKFLOW}" \

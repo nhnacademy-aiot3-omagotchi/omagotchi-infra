@@ -115,6 +115,13 @@ rollout_rule_engine_infra() {
 }
 EOF
 
+# A/B 내부 분기는 별도 순서 시험, 전체 진입점의 공통 함수 위임만 확인.
+cat >"${fixture_dir}/scripts/rolling-deploy.sh" <<'EOF'
+rolling_initialize_routes() { printf 'routes:initialize\n' >>"${MODE_TEST_EVENTS}"; }
+rolling_read() { printf '1111111111111111111111111111111111111111\n'; }
+rolling_deploy() { printf 'rolling:%s:%s\n' "$1" "$2" >>"${MODE_TEST_EVENTS}"; }
+EOF
+
 chmod +x \
   "${fake_bin}/flock" \
   "${fake_bin}/git" \
@@ -141,8 +148,16 @@ assert_contains "Eureka 등록 확인: IDENTITY-SERVICE" "${output_file}" \
   "Identity의 Eureka 등록 확인이 누락되었습니다."
 assert_contains "Eureka 등록 확인: LEARNING-SERVICE" "${output_file}" \
   "Learning의 Eureka 등록 확인이 누락되었습니다."
-assert_contains "--remove-orphans" "${events_file}" \
-  "전체 배포에서 이전 Rule Container 정리가 누락되었습니다."
+assert_not_contains "--remove-orphans" "${events_file}" \
+  "전체 배포에서 정상 단일·A/B Container의 일괄 삭제가 허용되었습니다."
+for application in gateway-service frontend identity-service prediction-service learning-service; do
+  assert_contains "rolling:${application}:${sha}" "${events_file}" \
+    "서비스별 공통 롤링 배포 누락: ${application}"
+done
+assert_before "rule-rollout:" "rolling:learning-service:" "${events_file}" \
+  "Rule의 호출 주소 전환 전에 Learning 단일 실행 제거 허용."
+assert_before "rolling:learning-service:" "rolling:prediction-service:" "${events_file}" \
+  "Learning의 호출 주소 전환 전에 Prediction 단일 실행 제거 허용."
 assert_contains "rule-rollout:${fixture_dir}/deploy.env" "${events_file}" \
   "전체 배포에서 Rule 롤아웃이 누락되었습니다."
 assert_contains "smoke:https://example.invalid" "${events_file}" \

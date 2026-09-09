@@ -51,14 +51,8 @@ assert_location_returns_404 "location ^~ /api/v1/internal/ {"
 # Docker Container IP의 주기적 재해석
 assert_contains "resolver 127.0.0.11 valid=10s ipv6=off;" \
   "Docker Embedded DNS resolver가 누락되었습니다."
-assert_contains "zone frontend_upstream 64k;" \
-  "Frontend 동적 Upstream Zone이 누락되었습니다."
-assert_contains "server frontend:8080 resolve;" \
-  "Frontend Upstream의 동적 DNS 재해석이 누락되었습니다."
-assert_contains "zone gateway_upstream 64k;" \
-  "Gateway 동적 Upstream Zone이 누락되었습니다."
-assert_contains "server gateway-service:8080 resolve;" \
-  "Gateway Upstream의 동적 DNS 재해석이 누락되었습니다."
+assert_contains "include /etc/nginx/conf.d/runtime/upstreams.conf;" \
+  "준비된 슬롯을 기록하는 운영 Upstream이 연결되지 않았습니다."
 assert_contains "proxy_pass http://frontend_upstream;" \
   "Root Route가 동적 Frontend Upstream을 사용하지 않습니다."
 assert_contains "proxy_pass http://gateway_upstream;" \
