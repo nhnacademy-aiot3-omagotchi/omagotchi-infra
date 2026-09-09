@@ -132,6 +132,9 @@ shellcheck scripts/*.sh tests/*.sh
 ```
 
 - 선행 조건: 전체 서비스 이미지 발행·Runtime 설정·중앙 로그 저장소 준비 완료
+- 배포 진입점: `deploy-infra.sh`, Nginx 기동 전에 `runtime/upstreams.conf` 생성
+  - 해당 파일이 없는 상태의 `docker compose up` 또는 `compose.sh up`으로 초기 기동 금지
+  - 신규 서버의 빈 구성 초기화는 현재 자동 처리 범위에서 제외
 - 알림 상태 저장소: 전체 부재 시 동일 배포 Lock 안에서 최초 생성, 준비된 경우 재사용
 - 배포 순서: Discovery → Nginx → Rule → Gateway·Frontend·Identity·Learning·Prediction → 관측성
   - Rule의 Learning 분산 호출 전환 후 Learning 단일 실행 제거
@@ -149,6 +152,8 @@ shellcheck scripts/*.sh tests/*.sh
 - Workflow 직렬화: 연속 main 반영은 Infra 자동 배포 Workflow 단위로 직렬화
 - 동시 실행: 기존 서비스·Infra 배포가 있으면 공용 Lock을 최대 600초 대기
 - 잠금 시간 초과: 실행 중인 배포를 중단하지 않고 새 배포만 실패
+- Workflow 시간 제한: 전체 작업의 실행 상한, 모든 재시도의 최대 대기 시간 합계 보장 아님
+  - 제한 도달 시 실패로 처리, 실행 중인 인스턴스·분배 목록·미완료 기록 확인 후 복구 판단
 
 ### 일반 앱 A/B 교체
 
@@ -161,7 +166,10 @@ shellcheck scripts/*.sh tests/*.sh
   - `STARTING`·초기 Health 응답만으로 배포 준비 완료 판단 금지
 - 요청 제외
   - Frontend·Gateway·Prediction: Nginx 후보 설정 검사·Reload·이전 Worker 종료 확인
+    - 파일 교체·Reload 명령 실패 시 직전 파일 복구와 대상 앱 유지, 실제 설정 반영 여부 확인 필요
+    - Reload 성공 후 이전 Worker 종료 대기 실패 시 변경한 분배 목록 유지
   - Identity·Learning·Rule: `OUT_OF_SERVICE` 적용 후 실제 호출자의 목록에서 제외 확인
+    - 일시적인 조회 실패는 제한 시간 안에서 재확인, 확인되지 않은 상태로 교체 진행 금지
   - 배포 관리 Endpoint는 해당 컨테이너의 `127.0.0.1`·`::1` 연결만 허용, 전달 Header를 통한 우회 차단
     - 같은 컨테이너 안의 접근을 구분하는 별도 인증 수단은 아님
 - 교체: 기존 실행의 정상 종료 → 새 이미지 기동 → 준비·등록 확인 → 분배 복귀 → 외부 Smoke Test
