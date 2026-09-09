@@ -47,7 +47,7 @@ jobs:
         shell: bash
         run: |
           docker run --rm \
-            --mount type=bind,src="${PWD}/nginx/conf.d",dst=/etc/nginx/conf.d,readonly \
+            --mount type=bind,src="${PWD}/nginx/conf.d/default.conf",dst=/etc/nginx/conf.d/default.conf,readonly \
             --mount type=bind,src="${PWD}/nginx/upstreams.example.conf",dst=/etc/nginx/conf.d/runtime/upstreams.conf,readonly \
             nginx:1.30.3-alpine nginx -t
 
