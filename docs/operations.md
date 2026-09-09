@@ -109,7 +109,7 @@ chmod 644 ../secrets/jwt-public.pem
 
 ```bash
 ./scripts/compose.sh config --quiet
-bash -n scripts/*.sh tests/*.sh
+for script in scripts/*.sh tests/*.sh; do bash -n "$script"; done
 shellcheck scripts/*.sh tests/*.sh
 ```
 

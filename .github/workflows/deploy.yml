@@ -34,7 +34,10 @@ jobs:
 
       - name: Validate shell scripts
         shell: bash
-        run: bash -n scripts/*.sh tests/*.sh
+        run: |
+          for script in scripts/*.sh tests/*.sh; do
+            bash -n "$script"
+          done
 
       - name: Lint shell scripts
         shell: bash
