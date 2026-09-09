@@ -63,6 +63,7 @@ jobs:
         run: |
           docker compose \
             --profile rollout \
+            --profile legacy \
             --env-file .env.prod.example \
             --env-file deploy.env.example \
             config --quiet
@@ -75,7 +76,7 @@ jobs:
       - validate
 
     runs-on: ubuntu-latest
-    # Runtime 설정 동기화 20분 + 전체 Infra 배포 60분의 기존 최대 대기 예산 보존
+    # 전체 작업의 실행 상한. 개별 재시도의 최대 대기 시간을 모두 보장하는 값은 아님.
     timeout-minutes: 80
 
     environment:

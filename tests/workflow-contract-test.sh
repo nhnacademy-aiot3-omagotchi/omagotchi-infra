@@ -51,7 +51,7 @@ extract_named_step() {
     $0 == target {
       capture = 1
     }
-    capture && $0 != target && /^      - name:/ {
+    capture && $0 != target && NF && $0 !~ /^        / {
       exit
     }
     capture {
@@ -80,7 +80,8 @@ assert_same_named_step() {
 deploy_condition="if: \${{ github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' }}"
 
 # PR 통과 후 main 검사에서만 실패하는 검증 경로 차이 방지.
-for step in 'Validate shell scripts' 'Lint shell scripts' 'Validate Nginx configuration'; do
+for step in 'Validate shell scripts' 'Lint shell scripts' 'Validate Nginx configuration' \
+  'Test deployment scripts' 'Validate Compose configuration'; do
   assert_same_named_step "${step}" "${INFRA_DIR}/.github/workflows/ci.yml" "${DEPLOY_WORKFLOW}" \
     "PR·main의 ${step} 검증 단계가 다릅니다."
 done
