@@ -38,6 +38,10 @@ fail() {
   exit 1
 }
 
+# 동적 Upstream의 DNS 갱신 설정 유지. 주소 변경 후 실제 재해석 검증과는 구분.
+grep -Eq '^[[:space:]]*resolver 127\.0\.0\.11 .*valid=[1-9][0-9]*s' "${NGINX_CONFIG}" ||
+  fail "Docker DNS의 유효기간 설정 누락"
+
 header_value() {
   local header_name="$1"
   local header_file="$2"
@@ -148,10 +152,14 @@ FRONTEND_REQUEST_ID="$(response_request_id "Frontend 요청" "${FRONTEND_HEADERS
 [[ "$(header_value "X-Received-Request-ID" "${FRONTEND_HEADERS}")" == "${FRONTEND_REQUEST_ID}" ]] ||
   fail "Frontend 전달값과 응답 Request ID가 일치하지 않습니다."
 
-for path in /actuator /actuator/prometheus /actuator/health; do
+for path in /api/v1/internal /api/v1/internal/ /actuator /actuator/prometheus /actuator/health; do
   [[ "$(curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' \
-    "http://127.0.0.1:${PROXY_PORT}${path}")" == 404 ]] || fail "내부 Actuator 외부 노출: ${path}"
+    "http://127.0.0.1:${PROXY_PORT}${path}")" == 404 ]] || fail "내부 API 외부 노출: ${path}"
 done
+
+# 공개 상태 경로가 Gateway의 Actuator 경로로 변환되는지 확인.
+[[ "$(curl --silent --show-error --max-time 5 \
+  "http://127.0.0.1:${PROXY_PORT}/api/health")" == '{"status":"UP"}' ]] || fail "Gateway 상태 경로 연결 실패"
 
 # IP·Host Header와 무관한 두 OTP 용도의 공통 예산 확인.
 # 초당 2건 전달 중 회복되는 분당 한도를 고려한 시도 상한, 첫 429에서 중단.

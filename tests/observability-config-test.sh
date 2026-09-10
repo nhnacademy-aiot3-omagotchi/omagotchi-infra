@@ -33,9 +33,9 @@ jq -e . "${INFRA_DIR}/observability/elasticsearch/index-template.json" >/dev/nul
 jq -e . "${INFRA_DIR}/observability/elasticsearch/lifecycle-policy.json" >/dev/null
 
 # Compose의 부모·하위 Label 공존 조건에서 실제 Filebeat 입력 생성 확인.
-# 테스트 프로젝트만 선택, 실제 Docker 로그 경로·Elasticsearch 출력은 사용하지 않음.
+# 테스트 프로젝트·가짜 로그만 선택, 실제 Docker 로그·Elasticsearch 출력은 사용하지 않음.
 sed -e "s/: omagotchi$/: ${FIXTURE_NAME}/" \
-  -e 's|/var/lib/docker/containers/|/nonexistent-fixture/|' \
+  -e 's|/var/lib/docker/containers/|/fixture-logs/|' \
   "${INFRA_DIR}/observability/filebeat/filebeat.yml" >"${TEST_TMP_DIR}/filebeat.yml"
 chmod 644 "${TEST_TMP_DIR}/filebeat.yml"
 fixture_id="$(docker run --detach --name "${FIXTURE_NAME}" \
@@ -46,8 +46,14 @@ fixture_id="$(docker run --detach --name "${FIXTURE_NAME}" \
   --label 'co.elastic.logs/enabled=true' \
   --entrypoint sleep nginx:1.30.3-alpine 60)"
 
+mkdir -p "${TEST_TMP_DIR}/logs/${fixture_id}"
+# ECS 이벤트를 Docker json-file 형식으로 포장, 운영의 Parser·Processor 모두 통과.
+jq -c '{log: (tojson + "\n"), stream: "stdout", time: "2026-09-10T00:00:00Z"}' \
+  "${SCRIPT_DIR}/fixtures/log-privacy.ndjson" >"${TEST_TMP_DIR}/logs/${fixture_id}/fixture.log"
+
 "${COMPOSE[@]}" run --detach --no-deps --name "${FILEBEAT_NAME}" \
   --volume "${TEST_TMP_DIR}/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro" \
+  --volume "${TEST_TMP_DIR}/logs:/fixture-logs:ro" \
   filebeat filebeat --strict.perms=false -e \
   -E output.elasticsearch.enabled=false -E output.console.enabled=true \
   -E logging.metrics.enabled=false >/dev/null
@@ -69,4 +75,25 @@ if [[ "${input_started}" != true ]]; then
   exit 1
 fi
 
-echo '관측 설정 해석·실제 Filebeat 입력 생성 통과. Elasticsearch 쓰기·Telegram 전송 없음.'
+# 중앙 오류에는 코드 위치만 보존, 원본 진단·본문·예외 메시지는 제외.
+for _ in {1..30}; do
+  docker logs "${FILEBEAT_NAME}" >"${TEST_TMP_DIR}/filebeat.log" 2>&1
+  if jq -se '[.[] | select(.event.dataset != null)] | length == 3' "${TEST_TMP_DIR}/filebeat.log" >/dev/null; then
+    break
+  fi
+  sleep 0.5
+done
+jq -se '
+  [.[] | select(.event.dataset != null)] as $events
+  | ($events | map(.event.dataset) | sort) == ["fixture.error", "fixture.error", "fixture.http"]
+    and any($events[]; .error.stack_trace | strings | contains("ExampleService.find(ExampleService.java:42)"))
+    and any($events[]; .http.request.id == "0123456789abcdef0123456789abcdef")
+    and any($events[]; .event.id == "raw-stack" and .error.stack_trace == null)
+    and all($events[]; .error.message == null and .http.request.body == null and .omagotchi.error == null)
+' "${TEST_TMP_DIR}/filebeat.log" >/dev/null
+if grep -Fq PRIVATE_FIXTURE_SECRET "${TEST_TMP_DIR}/filebeat.log"; then
+  echo 'Filebeat 정제 후 가짜 비밀값 잔존' >&2
+  exit 1
+fi
+
+echo '관측 설정·Filebeat 입력·오류 위치 보존·민감 원문 제외 통과. 학교 자원 접속 없음.'

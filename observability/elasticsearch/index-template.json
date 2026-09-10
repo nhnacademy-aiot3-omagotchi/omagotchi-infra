@@ -29,6 +29,7 @@
         "http.response.status_code": { "type": "integer" },
         "error.code": { "type": "keyword" },
         "error.type": { "type": "keyword" },
+        "error.stack_trace": { "type": "text", "index": false },
         "omagotchi.http.route": { "type": "keyword" },
         "gateway.route.id": { "type": "keyword" },
         "pipeline.correlation.id": { "type": "keyword" },
