@@ -21,10 +21,20 @@
 - Event 조건: stdout의 `nginx.access`·`*.http`·`*.error` JSON
 - 중앙 전송: `filebeat/filebeat.yml`의 허용 필드만 보존
   - 안전한 요약·HTTP 상태·서비스 정보·Request ID·Trace ID 등
+  - 오류의 `error.stack_trace`: 예외 종류·클래스/모듈·메서드/함수·파일명·줄 번호만 포함
+    - 앱의 공통 오류 기록기에서 구성, 예외 메시지·SQL 값·소스 코드·지역 변수 제외
+    - 원인 예외 최대 4개·원인별 호출 위치 최대 12개·전체 4,096자 제한, 생략 표식 표시
+    - 모든 호출 위치·모든 원인 예외의 보존 보장 아님, 전체 원본은 로컬 진단 로그에서만 확인
   - `@timestamp`: Filebeat 기본 보존, `include_fields` 목록에 중복 선언 금지
 - 제외: 다른 팀·수집기·Cloudflared·일반 기동 로그·임의 업무 로그·`*.diagnostic`·stderr
 - 원문 상세 조사: 기존 Docker `10MB × 3개` 순환 로그
   - Filebeat 탐색에 회전 파일 포함, Docker 보관 범위를 벗어난 로그 복구 불가
+- 오류 위치 확인: Telegram의 `요청 로그 보기` → `HTTP server error` 등 오류 이벤트 → `error.stack_trace`
+  - `HTTP request completed`는 접근 이벤트, 오류 호출 위치를 담은 이벤트와 구분
+  - 기존 Index의 `dynamic: false` 유지, 새 필드가 목록에 없으면 문서 상세의 JSON에서 확인
+  - 호출 위치는 원문 조회용, 별도 검색 색인 미생성·기존 Template 강제 갱신 불필요
+    - 근거: [Elasticsearch의 `dynamic: false`와 `_source` 보존](https://www.elastic.co/docs/reference/elasticsearch/mapping-reference/dynamic)
+  - Infra·서비스 반영 이후의 새 오류부터 표시, 과거 오류의 호출 위치 복원 불가
 - Data Stream: `logs-omagotchi-prod` 한 개·Primary Shard 한 개
 - ILM: `1일` 또는 Primary `1GB` Rollover, **Rollover 이후 3일** 경과한 Index 삭제
   - Event 발생 후 정확히 3일 삭제나 전체 저장 용량 상한을 뜻하지 않음

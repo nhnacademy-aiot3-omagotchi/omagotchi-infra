@@ -64,6 +64,8 @@ processors:
         - http.response.status_code
         - error.code
         - error.type
+        # 공통 오류 기록기가 메시지 없이 구성한 호출 위치. diagnostic 원문은 위에서 제외.
+        - error.stack_trace
         - omagotchi.http.route
         - gateway.route.id
         - pipeline.correlation.id
