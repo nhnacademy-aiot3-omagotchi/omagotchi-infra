@@ -72,6 +72,7 @@
           {"key": "db.operation.name", "value": {"stringValue": "SELECT"}},
           {"key": "db.query.summary", "value": {"stringValue": "SELECT study_records"}},
           {"key": "db.query.text", "value": {"stringValue": "SELECT PRIVATE_FIXTURE_SECRET"}},
+          {"key": "omagotchi.db.query.text", "value": {"stringValue": "SELECT PRIVATE_FIXTURE_SECRET"}},
           {"key": "jdbc.query[0]", "value": {"stringValue": "SELECT PRIVATE_FIXTURE_SECRET"}},
           {"key": "jdbc.params[0]", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
         ]
@@ -279,7 +280,8 @@
         "attributes": [
           {"key": "db.system.name", "value": {"stringValue": "postgresql"}},
           {"key": "db.query.summary", "value": {"stringValue": "UPDATE accounts"}},
-          {"key": "db.query.text", "value": {"stringValue": "UPDATE accounts SET nickname = ? WHERE email = ?"}},
+          {"key": "db.query.text", "value": {"stringValue": "UPDATE accounts SET nickname = 'PRIVATE_FIXTURE_SECRET'"}},
+          {"key": "omagotchi.db.query.text", "value": {"stringValue": "UPDATE accounts SET nickname = ? WHERE email = ?"}},
           {"key": "db.response.status_code", "value": {"stringValue": "23505"}},
           {"key": "db.operation.batch.size", "value": {"stringValue": "2"}},
           {"key": "jdbc.query[0]", "value": {"stringValue": "UPDATE accounts SET nickname = 'PRIVATE_FIXTURE_SECRET'"}},
@@ -297,7 +299,22 @@
         "attributes": [
           {"key": "db.system.name", "value": {"stringValue": "redis"}},
           {"key": "db.operation.name", "value": {"stringValue": "GET"}},
-          {"key": "db.query.text", "value": {"stringValue": "GET PRIVATE_FIXTURE_SECRET"}}
+          {"key": "db.query.text", "value": {"stringValue": "GET PRIVATE_FIXTURE_SECRET"}},
+          {"key": "omagotchi.db.query.text", "value": {"stringValue": "GET PRIVATE_FIXTURE_SECRET"}}
+        ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "fffffffffffffff3",
+        "parentSpanId": "2222222222222222",
+        "name": "SELECT accounts",
+        "kind": 3,
+        "startTimeUnixNano": "1788739200002000000",
+        "endTimeUnixNano": "1788739200003000000",
+        "attributes": [
+          {"key": "db.system.name", "value": {"stringValue": "postgresql"}},
+          {"key": "db.query.summary", "value": {"stringValue": "SELECT accounts"}},
+          {"key": "db.query.text", "value": {"stringValue": "SELECT 'PRIVATE_FIXTURE_SECRET' /* PRIVATE_FIXTURE_SECRET */"}},
+          {"key": "db.operation.batch.size", "value": {"intValue": "2"}}
         ]
       }]
     }]

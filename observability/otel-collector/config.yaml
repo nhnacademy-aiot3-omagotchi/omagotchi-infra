@@ -42,11 +42,16 @@ processors:
           # 현재 앱의 계측 출처만 보존. 임의 Scope 이름·버전의 입력값 유입 제외.
           - set(scope.name, "") where not IsMatch(scope.name, "^(org[.]springframework[.]boot|opentelemetry[.]instrumentation[.](fastapi|asgi)|app[.]routers[.]prediction)$")
           - set(scope.version, "") where scope.name == "" or not IsMatch(scope.version, "^[0-9]+([.][0-9]+){1,3}([ab][0-9]+)?$")
-          # SQL 본문은 값 제거를 적용한 Identity·Learning의 PostgreSQL Span만 허용.
+          # 기본 SQL 필드의 원문 제외. 앱의 정제 결과를 담은 전용 필드만 표준 필드로 이동.
+          - delete_key(span.attributes, "db.query.text")
           - >-
-            delete_key(span.attributes, "db.query.text")
-            where not IsMatch(resource.attributes["service.name"], "^(identity-service|learning-service)$")
-            or span.attributes["db.system.name"] != "postgresql"
+            set(span.attributes["db.query.text"], span.attributes["omagotchi.db.query.text"])
+            where IsMatch(resource.attributes["service.name"], "^(identity-service|learning-service)$")
+            and span.attributes["db.system.name"] == "postgresql" and IsString(span.attributes["omagotchi.db.query.text"])
+          # Micrometer 문자열의 표준 정수형 변환. 이미 정수인 배치 건수는 그대로 유지.
+          - >-
+            set(span.attributes["db.operation.batch.size"], Int(span.attributes["db.operation.batch.size"]))
+            where IsString(span.attributes["db.operation.batch.size"]) and IsMatch(span.attributes["db.operation.batch.size"], "^[0-9]+$")
           # 앱에서 정제한 SQL 구조와 호출 종류·대상·결과 보존. 바인딩 값 제외.
           - >-
             keep_keys(span.attributes, [

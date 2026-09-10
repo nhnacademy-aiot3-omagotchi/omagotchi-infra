@@ -109,6 +109,7 @@ jq -se '
       "eeeeeeeeeeeeeeee": "GET example.invalid",
       "fffffffffffffff1": "UPDATE accounts",
       "fffffffffffffff2": "Redis GET",
+      "fffffffffffffff3": "SELECT accounts",
       "fffffffffffffffb": "secured request",
       "fffffffffffffffc": "PATCH /kept/{id}",
       "fffffffffffffffd": "Client example.invalid",
@@ -163,9 +164,11 @@ jq -se '
   | ($spans["fffffffffffffff1"].attributes | from_entries) as $db
   | $db["db.query.text"].stringValue == "UPDATE accounts SET nickname = ? WHERE email = ?"
     and $db["db.response.status_code"].stringValue == "23505"
-    and $db["db.operation.batch.size"].stringValue == "2"
+    and ($db["db.operation.batch.size"].intValue | tonumber) == 2
+    and ($spans["fffffffffffffff3"].attributes | from_entries | .["db.operation.batch.size"].intValue | tonumber) == 2
     and $spans["fffffffffffffff1"].status.code == 2
-    and all($spans["6666666666666666", "fffffffffffffff2"].attributes[]; .key != "db.query.text")
+    and all($spans["6666666666666666", "fffffffffffffff2", "fffffffffffffff3"].attributes[]; .key != "db.query.text")
+    and all($spans[].attributes[]?; .key != "omagotchi.db.query.text")
 ' "${TEST_TMP_DIR}/traces.json" >/dev/null
 
 jq -se '

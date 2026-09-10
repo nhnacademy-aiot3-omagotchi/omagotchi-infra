@@ -167,7 +167,10 @@
   - `db.query.text`: Identity·Learning의 PostgreSQL Span에 한해 정제된 SQL 구조 보존
     - Grafana에서 DB Span 선택 후 속성의 `db.query.text` 확인, 정상·실패 쿼리 공통 적용
     - 예시: `UPDATE accounts SET nickname = ? WHERE email = ?`
-    - Datasource Micrometer 2.2.1의 SQL 정제·분석 캐시 재사용, 실제 바인딩 값·조회 결과 미수집
+    - Datasource Micrometer 2.2.1의 SQL 분석기 재사용, 실제 바인딩 값·조회 결과 미수집
+    - 원문 SQL을 키로 보관하는 분석 캐시 제거, 같은 SQL의 반복 분석 비용 증가 가능
+    - 앱의 정제 결과만 `omagotchi.db.query.text`로 전송, Collector에서 `db.query.text`로 이동
+    - 기본 `db.query.text`는 서비스와 무관하게 제거, 전용 필드 없는 계측의 원문 유입 방지
     - Prepared SQL도 직접 적은 값의 정제 적용, 실행 SQL 자체의 변경 없음
     - SELECT·INSERT·UPDATE·DELETE만 본문 허용, 4,096자 초과·해석 실패·남은 문자열/달러 인용/주석의 본문 제외
     - 본문을 제외해도 Span·시간·가능한 작업 종류와 요약 유지, 잘린 원문으로 대체하지 않는 방식
@@ -175,8 +178,10 @@
   - `db.response.status_code`: 실패한 JDBC 호출의 PostgreSQL SQLSTATE, 예시 `23505`
     - 쿼리 종료 후 예외에서 확인한 5자리 코드만 기록, 원본 오류 메시지 제외
   - `db.operation.batch.size`: 한 번의 배치 호출에 포함된 작업 건수, 조회 결과 행 수와 구분
+    - Micrometer의 문자열 값을 Collector에서 표준 정수형으로 변환, 기존 정수형은 유지
   - 원본 `db.statement`·`jdbc.query[*]`·`jdbc.params[*]`·`db.query.parameter.*` 미저장
-  - SQL 속성 허용과 서비스의 정제 설정을 함께 배포, 기존 설정의 빈 SQL 본문은 복원 불가
+  - Infra 먼저 반영 후 Identity·Learning 배포 권장, 중간에는 SQL 본문만 제외하고 Span 수집 유지
+    - 기존 설정의 빈 SQL 본문은 복원 불가
   - SQL 구조·호출 수·시간은 N+1 의심 구간의 근거, 같은 SQL의 반복만으로 N+1 확정 불가
   - 실제 N+1 판정·수정은 해당 조회 코드와 통제된 쿼리 수 검증으로 분리
   - SQL 본문에 따른 전송량 증가 가능, 기존 Sampling·Tempo 수신 제한·보존 기간 유지
@@ -184,6 +189,7 @@
 - 정제 실패: 해당 Payload 거절, 원문을 그대로 Tempo에 전달하지 않음
 - `error` 수준의 Collector 자체 로그, 원본 Context를 노출하는 Debug Exporter·Debug Logging 미사용
 - 허용 필드 값까지 임의 비밀값을 판별하는 보안 장치 아님
+  - 전용 SQL 필드는 앱의 정제 결과를 구별하는 계약, Collector의 SQL 재분석·내용 검증 없음
   - 앱에서 URL·예외 원문 제거 우선
   - 서비스명·Route·쿼리 요약·목적지·모델·도구 이름에 안전한 값 사용
   - 운영 Export 전 각 SDK의 가짜 비밀값 테스트 필요
