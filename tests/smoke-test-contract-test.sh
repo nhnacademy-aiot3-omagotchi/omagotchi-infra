@@ -70,11 +70,20 @@ for scenario in success retry connection-failure wrong-body exposed-api; do
 done
 
 # 주소를 생략하거나 잘못 입력한 경우 HTTP 호출 전 중단.
+calls="${TEST_TMP_DIR}/invalid-address.calls"
 for url in '' 'not-a-url'; do
-  if bash "${INFRA_DIR}/scripts/smoke-test.sh" "${url}" >/dev/null 2>&1; then
+  : >"${calls}"
+  if SMOKE_TEST_SCENARIO=success SMOKE_TEST_CALLS="${calls}" \
+    bash "${INFRA_DIR}/scripts/smoke-test.sh" "${url}" >/dev/null 2>&1; then
     fail "잘못된 Smoke 주소 허용"
   fi
+  [[ ! -s "${calls}" ]] || fail "잘못된 Smoke 주소로 HTTP 호출 실행"
 done
-if bash "${INFRA_DIR}/scripts/smoke-test.sh" >/dev/null 2>&1; then fail "Smoke 주소 생략 허용"; fi
+: >"${calls}"
+if SMOKE_TEST_SCENARIO=success SMOKE_TEST_CALLS="${calls}" \
+  bash "${INFRA_DIR}/scripts/smoke-test.sh" >/dev/null 2>&1; then
+  fail "Smoke 주소 생략 허용"
+fi
+[[ ! -s "${calls}" ]] || fail "Smoke 주소 생략 시 HTTP 호출 실행"
 
 echo "Smoke response, retry and failure tests passed"
