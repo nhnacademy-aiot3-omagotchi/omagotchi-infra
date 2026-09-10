@@ -86,16 +86,42 @@ jq -se --slurpfile input "${SCRIPT_DIR}/fixtures/collector-privacy.json" '
   | [$input[0].resourceSpans[].scopeSpans[].spans[]] | sort_by(.spanId) as $original
   | ($spans | map({traceId, spanId, parentSpanId, kind, startTimeUnixNano, endTimeUnixNano}))
       == ($original | map({traceId, spanId, parentSpanId, kind, startTimeUnixNano, endTimeUnixNano}))
-    and ($spans | map(.name)) == ["GET", "Internal", "DB", "Redis", "AI", "AI tool", "Messaging", "prediction.inference", "GET", "POST", "GET", "PATCH", "Client", "GET", "POST"]
     and all($spans[]; ((.events // []) | length) == 0 and ((.links // []) | length) == 0
       and (.traceState // "") == "" and (.status.message // "") == "")
-    and ($spans[0] | .status.code == 2
+' "${TEST_TMP_DIR}/traces.json" >/dev/null
+
+# 배열 순서 대신 Span ID로 출력 이름과 속성 확인.
+jq -se '
+  [.[].resourceSpans[].scopeSpans[].spans[]] | INDEX(.spanId) as $spans
+  | ($spans | map_values(.name)) == {
+      "2222222222222222": "GET /api/v1/rules/{ruleId}",
+      "3333333333333333": "Internal",
+      "4444444444444444": "security filterchain before",
+      "5555555555555555": "Internal",
+      "6666666666666666": "SELECT study_records",
+      "7777777777777777": "Redis GET",
+      "8888888888888888": "AI chat example-model",
+      "9999999999999999": "AI tool lookupStudySummary",
+      "aaaaaaaaaaaaaaaa": "Messaging process omagotchi.sensor.raw",
+      "bbbbbbbbbbbbbbbb": "prediction.inference",
+      "cccccccccccccccc": "GET /api/v1/rules/{ruleId}",
+      "dddddddddddddddd": "POST example.invalid",
+      "eeeeeeeeeeeeeeee": "GET example.invalid",
+      "fffffffffffffff1": "UPDATE accounts",
+      "fffffffffffffff2": "Redis GET",
+      "fffffffffffffffb": "secured request",
+      "fffffffffffffffc": "PATCH /kept/{id}",
+      "fffffffffffffffd": "Client example.invalid",
+      "fffffffffffffffe": "GET /",
+      "ffffffffffffffff": "POST"
+    }
+    and ($spans["2222222222222222"] | .status.code == 2
       and any(.attributes[]; .key == "http.route" and .value.stringValue == "/api/v1/rules/{ruleId}"))
-    and ($spans[2] | any(.attributes[]; .key == "db.query.summary" and .value.stringValue == "SELECT study_records"))
-    and ($spans[3] | any(.attributes[]; .key == "db.operation" and .value.stringValue == "GET"))
-    and ($spans[4] | any(.attributes[]; .key == "gen_ai.usage.input_tokens" and (.value.intValue | tonumber) == 20))
-    and ($spans[5] | any(.attributes[]; .key == "spring.ai.tool.definition.name" and .value.stringValue == "lookupStudySummary"))
-    and ($spans[6] | any(.attributes[]; .key == "messaging.operation.type" and .value.stringValue == "process"))
+    and ($spans["6666666666666666"] | any(.attributes[]; .key == "db.query.summary" and .value.stringValue == "SELECT study_records"))
+    and ($spans["7777777777777777"] | any(.attributes[]; .key == "db.operation" and .value.stringValue == "GET"))
+    and ($spans["8888888888888888"] | any(.attributes[]; .key == "gen_ai.usage.input_tokens" and (.value.intValue | tonumber) == 20))
+    and ($spans["9999999999999999"] | any(.attributes[]; .key == "spring.ai.tool.definition.name" and .value.stringValue == "lookupStudySummary"))
+    and ($spans["aaaaaaaaaaaaaaaa"] | any(.attributes[]; .key == "messaging.operation.type" and .value.stringValue == "process"))
 ' "${TEST_TMP_DIR}/traces.json" >/dev/null
 
 # Spring 속성의 개별 변환·기존 OTel 속성 우선·응답 없는 호출의 보존 확인.
@@ -131,7 +157,23 @@ jq -se '
     and $partial_server["http.response.status_code"] == null and $partial_server["http.route"] == null
 ' "${TEST_TMP_DIR}/traces.json" >/dev/null
 
-jq -se 'all(.[].resourceSpans[].scopeSpans[]; (.scope.name // "") == "" and (.scope.version // "") == "")' \
+# 앱에서 정제한 PostgreSQL 본문·결과 보존. 다른 서비스·Redis의 원문 허용 방지.
+jq -se '
+  [.[].resourceSpans[].scopeSpans[].spans[]] | INDEX(.spanId) as $spans
+  | ($spans["fffffffffffffff1"].attributes | from_entries) as $db
+  | $db["db.query.text"].stringValue == "UPDATE accounts SET nickname = ? WHERE email = ?"
+    and $db["db.response.status_code"].stringValue == "23505"
+    and $db["db.operation.batch.size"].stringValue == "2"
+    and $spans["fffffffffffffff1"].status.code == 2
+    and all($spans["6666666666666666", "fffffffffffffff2"].attributes[]; .key != "db.query.text")
+' "${TEST_TMP_DIR}/traces.json" >/dev/null
+
+jq -se '
+  [.[].resourceSpans[].scopeSpans[].scope] as $scopes
+  | any($scopes[]; .name == "org.springframework.boot" and .version == "4.1.0")
+    and all($scopes[]; (.name // "") == "org.springframework.boot" or ((.name // "") == "" and (.version // "") == ""))
+    and all($scopes[]; ((.attributes // []) | length) == 0)
+' \
   "${TEST_TMP_DIR}/traces.json" >/dev/null
 
-echo 'Collector 실제 정제 통과: 주요 Span·부모 관계 보존, Scope 식별자·원문·Event·Link 제거.'
+echo 'Collector 실제 정제 통과: 작업 이름·주요 Span·부모 관계 보존, 원문·Event·Link 제거.'

@@ -42,6 +42,25 @@
         "endTimeUnixNano": "1788739200020000000"
       }, {
         "traceId": "11111111111111111111111111111111",
+        "spanId": "4444444444444444",
+        "parentSpanId": "2222222222222222",
+        "name": "security filterchain before",
+        "kind": 1,
+        "startTimeUnixNano": "1788739200001000000",
+        "endTimeUnixNano": "1788739200002000000",
+        "attributes": [
+          {"key": "spring.security.authentication.principal", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
+        ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "5555555555555555",
+        "parentSpanId": "2222222222222222",
+        "name": "authenticate PRIVATE_FIXTURE_SECRET",
+        "kind": 1,
+        "startTimeUnixNano": "1788739200001000000",
+        "endTimeUnixNano": "1788739200002000000"
+      }, {
+        "traceId": "11111111111111111111111111111111",
         "spanId": "6666666666666666",
         "parentSpanId": "2222222222222222",
         "name": "SELECT PRIVATE_FIXTURE_SECRET",
@@ -228,6 +247,57 @@
         "attributes": [
           {"key": "method", "value": {"stringValue":"POST"}},
           {"key": "status", "value": {"boolValue":false}}
+        ]
+      }]
+    }, {
+      "scope": {"name": "org.springframework.boot", "version": "4.1.0"},
+      "spans": [{
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "fffffffffffffffb",
+        "parentSpanId": "2222222222222222",
+        "name": "secured request",
+        "kind": 1,
+        "startTimeUnixNano": "1788739200001000000",
+        "endTimeUnixNano": "1788739200002000000"
+      }]
+    }]
+  }, {
+    "resource": {"attributes": [
+      {"key": "service.name", "value": {"stringValue": "learning-service"}}
+    ]},
+    "scopeSpans": [{
+      "scope": {"name": "org.springframework.boot", "version": "4.1.0"},
+      "spans": [{
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "fffffffffffffff1",
+        "parentSpanId": "2222222222222222",
+        "name": "UPDATE accounts",
+        "kind": 3,
+        "startTimeUnixNano": "1788739200001000000",
+        "endTimeUnixNano": "1788739200002000000",
+        "status": {"code": 2, "message": "PRIVATE_FIXTURE_SECRET"},
+        "attributes": [
+          {"key": "db.system.name", "value": {"stringValue": "postgresql"}},
+          {"key": "db.query.summary", "value": {"stringValue": "UPDATE accounts"}},
+          {"key": "db.query.text", "value": {"stringValue": "UPDATE accounts SET nickname = ? WHERE email = ?"}},
+          {"key": "db.response.status_code", "value": {"stringValue": "23505"}},
+          {"key": "db.operation.batch.size", "value": {"stringValue": "2"}},
+          {"key": "jdbc.query[0]", "value": {"stringValue": "UPDATE accounts SET nickname = 'PRIVATE_FIXTURE_SECRET'"}},
+          {"key": "db.query.parameter.0", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}},
+          {"key": "jdbc.params[0]", "value": {"stringValue": "PRIVATE_FIXTURE_SECRET"}}
+        ]
+      }, {
+        "traceId": "11111111111111111111111111111111",
+        "spanId": "fffffffffffffff2",
+        "parentSpanId": "2222222222222222",
+        "name": "GET PRIVATE_FIXTURE_SECRET",
+        "kind": 3,
+        "startTimeUnixNano": "1788739200002000000",
+        "endTimeUnixNano": "1788739200003000000",
+        "attributes": [
+          {"key": "db.system.name", "value": {"stringValue": "redis"}},
+          {"key": "db.operation.name", "value": {"stringValue": "GET"}},
+          {"key": "db.query.text", "value": {"stringValue": "GET PRIVATE_FIXTURE_SECRET"}}
         ]
       }]
     }]

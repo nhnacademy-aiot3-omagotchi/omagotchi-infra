@@ -129,11 +129,12 @@
 
 | 대상 | 보존 정보 | 표시 이름 |
 |---|---|---|
-| HTTP | Method·상태·Route Template·호출 대상 | 검증된 Method 또는 `HTTP` |
-| JDBC·InfluxDB | DB 종류·작업 종류·Collection·정제된 쿼리 요약 | `DB` |
-| Redis | DB 종류·명령 종류 | `Redis` |
-| RabbitMQ 등 Messaging | 시스템·발행/소비 작업·고정 목적지 이름 | `Messaging` |
-| AI 모델·도구 | 모델·작업·도구 이름·토큰 사용량 | `AI`·`AI tool` |
+| HTTP | Method·상태·Route Template·호출 대상 | 서버 `GET /…/{id}`, Client `POST learning-service` |
+| JDBC·InfluxDB | DB 종류·작업 종류·Collection·쿼리 요약, JDBC의 정제된 SQL·오류 코드·배치 건수 | `SELECT study_records` 등 값 없는 요약, 없으면 `DB SELECT`·`DB` |
+| Redis | DB 종류·명령 종류 | `Redis GET` 등 명령 이름, Key 제외 |
+| RabbitMQ 등 Messaging | 시스템·발행/소비 작업·고정 목적지 이름 | `Messaging process omagotchi.sensor.raw` 등 작업·목적지 |
+| AI 모델·도구 | 모델·작업·도구·Advisor 이름·토큰 사용량 | `AI chat 모델명`, `AI tool 도구명`, `AI advisor Advisor명` |
+| Spring Security | 코드에 고정된 처리 단계 | `security filterchain before`, `secured request` 등 |
 | 수동 업무 계측 | 합의된 고정 작업 이름 | 아래 허용 이름 |
 
 - Spring HTTP 속성의 표준 Key 변환 후 허용 목록 적용
@@ -147,9 +148,15 @@
   - 이번 구현: `prediction.inference`, `influxdb.query`, `influxdb.write`, `storage.upload`, `storage.download`
   - `sensor.process`·`job.execute`: 허용 이름만 예약, 모든 센서 처리·Scheduler 계측 완료를 뜻하지 않음
   - 사용자·장치·파일·작업 ID를 이름에 붙이지 않는 방식
-- 제거: 원본 URL·Query·Header·SQL 본문·바인딩 값·Redis Key/Value·AI 대화·도구 입력/결과·메시지 본문·임의 속성
-  - Scope 속성뿐 아니라 이름·버전도 제거
+- 제거: 원본 URL·Query·Header·정제 전 SQL·바인딩 값·Redis Key/Value·AI 대화·도구 입력/결과·메시지 본문·임의 속성
+  - Scope 속성 제외, 현재 사용 중인 Spring Boot·FastAPI·ASGI·Prediction 계측의 이름·버전만 허용
   - Status Message·Tracestate·Span Event·Span Link 제거
+- 표시 이름: 허용된 속성으로 구성, 입력값이 들어갈 수 있는 원래 Span 이름의 일괄 복원 제외
+  - 속성이 없는 구간은 기존 `Internal`·`DB` 등의 이름 유지
+  - 메서드별 신규 Span 추가 없음, 전체 Java·Python 메서드 호출 목록을 보여주는 기능 아님
+  - 오류의 코드 위치: 같은 Request ID로 Kibana 오류 이벤트의 `error.stack_trace` 확인
+  - 변경 이후에 수집된 데이터부터 적용, 이미 정제·저장된 이름의 복원 불가
+  - 구성 기준: [Collector 0.160.0의 OTTL 함수](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.160.0/pkg/ottl/ottlfuncs/README.md)
 - Link와 Parent 관계의 구분
   - Link 목록만 초기화, Link를 가진 Span과 Parent Span ID는 보존
   - 별도 Trace·배치 메시지를 연결하는 Link 관계의 조회 불가
@@ -157,9 +164,23 @@
   - Rule 자체 Retry Worker·DLQ까지 최초 Trace 유지 보장 없음, 기존 업무 Correlation 유지
 - 쿼리 조회의 제한
   - `db.query.summary`: 애플리케이션에서 값 제거를 마친 요약만 전달
-  - 원본 `db.query.text`·`db.statement`·`jdbc.query[*]` 미저장
-  - 반복 요약·호출 수·시간은 N+1 의심 구간의 근거, 서로 다른 SQL의 동일 요약 가능성
+  - `db.query.text`: Identity·Learning의 PostgreSQL Span에 한해 정제된 SQL 구조 보존
+    - Grafana에서 DB Span 선택 후 속성의 `db.query.text` 확인, 정상·실패 쿼리 공통 적용
+    - 예시: `UPDATE accounts SET nickname = ? WHERE email = ?`
+    - Datasource Micrometer 2.2.1의 SQL 정제·분석 캐시 재사용, 실제 바인딩 값·조회 결과 미수집
+    - Prepared SQL도 직접 적은 값의 정제 적용, 실행 SQL 자체의 변경 없음
+    - SELECT·INSERT·UPDATE·DELETE만 본문 허용, 4,096자 초과·해석 실패·남은 문자열/달러 인용/주석의 본문 제외
+    - 본문을 제외해도 Span·시간·가능한 작업 종류와 요약 유지, 잘린 원문으로 대체하지 않는 방식
+    - 테이블·컬럼·별칭은 코드에 정한 이름 사용, 사용자 입력으로 만든 식별자까지 개인정보 제거 보장 없음
+  - `db.response.status_code`: 실패한 JDBC 호출의 PostgreSQL SQLSTATE, 예시 `23505`
+    - 쿼리 종료 후 예외에서 확인한 5자리 코드만 기록, 원본 오류 메시지 제외
+  - `db.operation.batch.size`: 한 번의 배치 호출에 포함된 작업 건수, 조회 결과 행 수와 구분
+  - 원본 `db.statement`·`jdbc.query[*]`·`jdbc.params[*]`·`db.query.parameter.*` 미저장
+  - SQL 속성 허용과 서비스의 정제 설정을 함께 배포, 기존 설정의 빈 SQL 본문은 복원 불가
+  - SQL 구조·호출 수·시간은 N+1 의심 구간의 근거, 같은 SQL의 반복만으로 N+1 확정 불가
   - 실제 N+1 판정·수정은 해당 조회 코드와 통제된 쿼리 수 검증으로 분리
+  - SQL 본문에 따른 전송량 증가 가능, 기존 Sampling·Tempo 수신 제한·보존 기간 유지
+  - 근거: [SQL 관측 기준](https://opentelemetry.io/docs/specs/semconv/db/sql/), [PostgreSQL 오류 코드·배치 기준](https://opentelemetry.io/docs/specs/semconv/db/postgresql/)
 - 정제 실패: 해당 Payload 거절, 원문을 그대로 Tempo에 전달하지 않음
 - `error` 수준의 Collector 자체 로그, 원본 Context를 노출하는 Debug Exporter·Debug Logging 미사용
 - 허용 필드 값까지 임의 비밀값을 판별하는 보안 장치 아님
@@ -223,7 +244,7 @@ curl --disable --fail --silent --show-error --max-time 5 http://127.0.0.1:13000/
 
 - 서비스 저장소별 독립 PR, Infra와 서비스 배포의 분리
 - 범위: 기존 HTTP + JDBC·Redis·AI 우선, RabbitMQ·센서 처리의 별도 검증 단위
-  - Identity·Learning: Datasource Micrometer `2.2.1`의 QUERY만 계측, SQL 본문·Parameter 제외
+  - Identity·Learning: Datasource Micrometer `2.2.1`의 QUERY만 계측, 정제된 SQL 구조 보존·Parameter 제외
   - Frontend·Learning Redis: 기존 Boot·Lettuce 자동 구성 재사용, 명령 인자 수집 비활성화 기본값 유지
   - Learning: 직접 생성하는 AI 모델·ChatClient의 ObservationRegistry 연결, 대화·도구 원문 미수집
   - Rule·Learning: RabbitTemplate·Listener 계측과 Header 전파, Retry·DLQ 경계 확인
@@ -246,7 +267,8 @@ curl --disable --fail --silent --show-error --max-time 5 http://127.0.0.1:13000/
     - 중간 서비스에서 독립적으로 재추출하거나 DB·메시지 Span만 삭제하는 방식 제외
     - 모든 오류 Trace의 보존 보장 없음, 기존 오류 로그·Telegram 전송은 Trace Sampling과 별개
     - 유효한 외부 sampled Header의 부모 결정도 유지, 전체 유입량의 정확한 10% 상한 아님
-  - Spring `TraceAttributeFilter`: 고카디널리티 속성 중 안전한 쿼리 요약·오류 타입·토큰 수만 유지
+  - Spring `TraceAttributeFilter`: 고카디널리티 속성 중 안전한 쿼리 요약·오류 타입·토큰 수 유지
+    - Identity·Learning: 정제된 SQL·SQLSTATE·배치 건수의 추가 보존
     - 저카디널리티 속성과 예외 Event까지 제거하는 기능 아님, 최종 원문 정제는 Collector 책임
   - Learning: 직접 만든 AI 모델·ChatClient에 공통 Registry 주입, 기존 전용 Executor에 Context 복원 추가
   - Rabbit: 기본 Convention의 센서 Routing Key 제외, 고정 Exchange·Queue와 발행/소비 종류만 사용
