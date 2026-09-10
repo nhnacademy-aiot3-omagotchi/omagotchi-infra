@@ -149,15 +149,11 @@ assert_contains "Eureka 등록 확인: IDENTITY-SERVICE" "${output_file}" \
 assert_contains "Eureka 등록 확인: LEARNING-SERVICE" "${output_file}" \
   "Learning의 Eureka 등록 확인이 누락되었습니다."
 assert_not_contains "--remove-orphans" "${events_file}" \
-  "전체 배포에서 정상 단일·A/B Container의 일괄 삭제가 허용되었습니다."
+  "전체 배포에서 정상 Container의 일괄 삭제가 허용되었습니다."
 for application in gateway-service frontend identity-service prediction-service learning-service; do
   assert_contains "rolling:${application}:${sha}" "${events_file}" \
     "서비스별 공통 롤링 배포 누락: ${application}"
 done
-assert_before "rule-rollout:" "rolling:learning-service:" "${events_file}" \
-  "Rule의 호출 주소 전환 전에 Learning 단일 실행 제거 허용."
-assert_before "rolling:learning-service:" "rolling:prediction-service:" "${events_file}" \
-  "Learning의 호출 주소 전환 전에 Prediction 단일 실행 제거 허용."
 assert_contains "rule-rollout:${fixture_dir}/deploy.env" "${events_file}" \
   "전체 배포에서 Rule 롤아웃이 누락되었습니다."
 assert_contains "smoke:https://example.invalid" "${events_file}" \

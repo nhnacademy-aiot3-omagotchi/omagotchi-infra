@@ -43,6 +43,19 @@ processors:
           - not:
               regexp:
                 event.dataset: '^(nginx\.access|[^.]+\.(http|error))$'
+  # 라이브러리의 원문 Stack 제외. 공통 오류 기록기가 정제한 전용 필드만 ECS 필드로 이동.
+  - drop_fields:
+      fields: [error.stack_trace]
+      ignore_missing: true
+  - rename:
+      fields:
+        - from: omagotchi.error.stack_trace
+          to: error.stack_trace
+      ignore_missing: true
+      fail_on_error: true
+      when:
+        regexp:
+          event.dataset: '^[^.]+\.error$'
   # 수집 계약이 있는 접근·오류 Event만 저장. 진단·임의 업무 Payload의 유입 차단.
   # @timestamp는 Filebeat가 기본 보존하는 필드이므로 목록에서 제외.
   - include_fields:
@@ -64,6 +77,8 @@ processors:
         - http.response.status_code
         - error.code
         - error.type
+        # 공통 오류 기록기가 메시지 없이 구성한 호출 위치. diagnostic 원문은 위에서 제외.
+        - error.stack_trace
         - omagotchi.http.route
         - gateway.route.id
         - pipeline.correlation.id

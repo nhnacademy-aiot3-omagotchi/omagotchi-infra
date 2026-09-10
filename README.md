@@ -60,17 +60,19 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
 ## 주요 파일
 
 - `compose.yaml`: 운영 Service·Network·Healthcheck·Log Rotation
-  - `x-서비스명`: 단일 실행과 A/B에서 공유하는 설정, 실행 대상 아님
-  - `legacy`: 기존 단일 실행의 최초 전환용 정의, 평상시 시작 대상에서 제외
+  - `x-서비스명`: A/B에서 공유하는 설정, 실행 대상 아님
+  - 일반 앱은 A/B 정의만 유지, 구형 단일 구성의 자동 전환 제외
 - `nginx/conf.d/default.conf`: Frontend·Gateway Route
 - `scripts/compose.sh`: Runtime 설정 검증·Compose 실행 Adapter
 - `scripts/sync-runtime-config.sh`: Runtime 설정 후보 검증·직전 설정 백업·원자적 교체
+- `scripts/configure-deploy-ssh.sh`: GitHub Runner의 SSH 접속 준비
+- `scripts/sync-runtime-remote.sh`: Runner에서 후보 설정 전달·서버 동기화 호출
+  - 자동 배포·수동 설정 동기화에서 공동 사용, 서버의 Git 갱신 전에도 실행 가능
 - `scripts/deploy-infra.sh`: 전체 운영 구성 순차 배포
-  - 호출 주소 선행 전환·A/B 한 자리씩 교체·외부 Smoke Test 순서 실행
+  - A/B 한 자리씩 교체·외부 Smoke Test 순서 실행
   - Nginx 설정 검증·Reload 실패 시 배포 실패 처리
 - `scripts/rolling-deploy.sh`: 일반 앱 A/B의 준비·요청 제외·교체·복귀·실패 슬롯 복구
   - `rolling_deploy`: 사전 확인·평상시 A/B 교체·성공 버전 기록
-  - `rolling_migrate_single`: 단일 실행에서 A/B로 바꾸는 최초 전환, 실패 시 실행 상태와 기록 유지
   - 하위 함수: 실제 Compose·Eureka·Nginx 상태 확인과 변경
   - `nginx/conf.d/runtime/`: 실행 중인 분배 목록, Git 제외
   - `.rollout/`: 중단 시 확인할 슬롯·진행 단계, Git 제외
@@ -86,7 +88,8 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
 - `observability/`: Filebeat 중앙 로그·ElastAlert2 운영 오류 알림·팀 저장소 초기화
 - `scripts/observability-compose.sh`: 별도 관측 Compose 프로젝트 실행
 - `scripts/observability-setup.sh`: 초기화 Container의 기존 자원 확인·내장 Setup 실행
-- `tests/`: Shell 배포 계약 회귀 테스트
+- `tests/validate.sh`: 로컬·PR·main의 공통 검증 진입점
+- `tests/`: 배포 실패·복구와 설정 연결·실제 요청의 회귀 테스트
 
 ## 로컬 검증
 
@@ -103,7 +106,13 @@ shellcheck scripts/*.sh tests/*.sh
 ```
 
 - 실제 운영 Secret 사용 금지
-- 예시 값의 Compose 해석·Shell 문법 검증만 수행
+- 위 명령의 범위: 예시 값의 Compose 해석·Shell 문법·정적 검사
+- 전체 검증: Infra 디렉터리에서 `bash tests/validate.sh`
+  - 필요 도구: Bash·Docker Compose·ShellCheck·jq·Python 3
+  - 테스트 전용 컨테이너·네트워크·볼륨 사용, 종료 후 해당 자원만 정리
+  - 학교 자원 접속·운영 배포·Telegram 알림 전송 제외
+  - macOS에서 `flock`이 없으면 잠금 동시 실행 검사만 생략, Linux CI에서 수행
+  - macOS의 기본 Bash가 아닌 Bash 4 이상 사용
 
 ## 배포 원칙
 
@@ -126,7 +135,7 @@ shellcheck scripts/*.sh tests/*.sh
 - Discovery 변경: Eureka Client보다 먼저 배포
 - Rule A/B 변경: 두 Instance 동시 재생성 금지
 - 일반 앱: Frontend·Gateway·Identity·Learning·Prediction 상시 A/B, 한 자리씩 교체
-  - 첫 반영 전 앱 준비·종료 기능의 선행 배포 필요, 기존 단일 실행과 A/B 혼재 시 자동 진행 중단
+  - 기존 A/B의 준비 상태 확인 후 교체, 구형 단일 컨테이너가 남으면 자동 진행 중단
   - 신규 서버의 빈 구성 초기화와 장시간 SSE 연속성은 별도 검증 대상
 - 완료 판단: CI 성공과 실제 운영 Health·Route 검증의 분리
 

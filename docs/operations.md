@@ -9,6 +9,15 @@ Infra 운영 담당자를 위한 Host 준비·배포·검증 절차.
 - 전체 Infra 배포
 - 배포 후 확인·복구
 
+## 변경 전 로컬 확인
+
+- Infra 디렉터리에서 `bash tests/validate.sh` 실행
+- PR·main과 같은 검증 내용, 운영 Secret·학교 서버 접속 불필요
+- GitHub Runner의 SSH 준비·설정 전달 코드는 자동 배포와 수동 동기화에서 공동 사용
+- 서버 배포 잠금은 Git 갱신 전 획득
+  - 서버에 새 공통 파일이 없을 수 있으므로 각 배포 진입점의 잠금 함수 유지
+  - 잠금 파일·대기·실패 처리의 일관성은 기존 잠금 테스트에서 확인
+
 ## Host 파일 계약
 
 배포 Script 기준 상대 경로:
@@ -131,14 +140,12 @@ shellcheck scripts/*.sh tests/*.sh
   <40-character-infra-commit-sha>
 ```
 
-- 선행 조건: 전체 서비스 이미지 발행·Runtime 설정·중앙 로그 저장소 준비 완료
+- 선행 조건: 일반 앱 A/B 구성·전체 서비스 이미지·Runtime 설정·중앙 로그 저장소 준비 완료
 - 배포 진입점: `deploy-infra.sh`, Nginx 기동 전에 `runtime/upstreams.conf` 생성
   - 해당 파일이 없는 상태의 `docker compose up` 또는 `compose.sh up`으로 초기 기동 금지
   - 신규 서버의 빈 구성 초기화는 현재 자동 처리 범위에서 제외
 - 알림 상태 저장소: 전체 부재 시 동일 배포 Lock 안에서 최초 생성, 준비된 경우 재사용
 - 배포 순서: Discovery → Nginx → Rule → Gateway·Frontend·Identity·Learning·Prediction → 관측성
-  - Rule의 Learning 분산 호출 전환 후 Learning 단일 실행 제거
-  - Learning의 내부 Nginx 주소 전환 후 Prediction 단일 실행 제거
 - Container 명령: `exec -T --interactive=false`, SSH로 전달한 배포 Script의 표준 입력과 분리
   - `-T`만 사용하면 TTY만 해제, 남은 배포 Script를 소비한 뒤 성공 종료하는 현상 가능
 - 공개 관측 파일: Container 시작 전 Bind Mount 읽기·탐색 권한 복구, Secret 권한 변경 없음
@@ -164,6 +171,8 @@ shellcheck scripts/*.sh tests/*.sh
 - 준비 확인: 두 자리의 실제 이미지와 배포 기록 일치, 앱 준비·의존성 Health·Discovery 정상 상태
   - 등록 앱은 현재 실행 ID가 자신의 Eureka 목록에 UP으로 반영된 상태까지 확인
   - `STARTING`·초기 Health 응답만으로 배포 준비 완료 판단 금지
+  - 일시적인 503·조회 실패는 대상별 최대 90초 동안 재확인, 복구되지 않으면 교체 중단
+  - 제한 시간 초과 시 실패 대상과 마지막 검사 내용 출력, HTTP 실패의 URL·상태 코드 포함
 - 요청 제외
   - Frontend·Gateway·Prediction: Nginx 후보 설정 검사·Reload·이전 Worker 종료 확인
     - 파일 교체·Reload 명령 실패 시 직전 파일 복구와 대상 앱 유지, 실제 설정 반영 여부 확인 필요
@@ -180,20 +189,19 @@ shellcheck scripts/*.sh tests/*.sh
 - 상태 기록
   - `deploy.env`의 `*_A_IMAGE_TAG`·`*_B_IMAGE_TAG`: 각 자리의 검증된 이미지
   - 기존 `*_IMAGE_TAG`: 두 자리 모두 성공한 마지막 배포, 같은 SHA의 설정 변경도 순차 교체
-  - `.rollout/<service>.state`: 대상·구/신 SHA·진행 단계, 정상 완료 또는 성공한 자동 복구 후 제거
+  - `.rollout/<service>.state`: 대상·구/신 SHA·진행 단계
+    - 각 자리의 분배 복귀·Smoke Test·이미지 기록 완료 후 제거
+  - 완료된 A 다음의 사전 검사 실패: 새 A와 기존 B 유지, 미완료 교체 기록 없이 배포 실패 처리
+    - 상태 복구 후 Workflow 재실행 가능, B부터 이어받지 않고 A부터 순차 재배포
 - 미완료 기록이 남은 경우
   - 자동 재실행 중단, 기록 삭제만으로 재시도 금지
   - 실제 실행 이미지·정상인 반대 자리·Nginx 분배 목록·Eureka 제외 상태 확인
   - 정상 자리 유지 후 실패 자리의 복구 판단, Secret·DB 변경까지 이미지 복구로 되돌린다고 가정 금지
   - 강제 종료 이후의 자동 복구와 신규 서버 초기화는 현재 자동 처리 범위에서 제외
-- 첫 전환
-  - `compose.yaml`의 `x-서비스명`은 공통 설정, `legacy`는 기존 단일 실행의 종료에 필요한 정의
-  - A/B 공통 설정과 최초 전환용 실행 정의의 분리, 평상시 `legacy` 활성화 불필요
-  - 새 관리 Endpoint·준비·종료 기능을 담은 서비스 이미지의 선행 반영
-  - 단일 실행 → 새 A 준비·편입 → 단일 실행 제외·종료 → B 준비·편입, 최대 두 개 유지
-  - 기존 Nginx 설정·Compose 변경이 포함되는 최초 적용 자체의 무중단 보장 제외
-  - 단일·A/B 혼재 또는 기존 호출 주소가 남은 경우 기존 실행을 제거하지 않고 중단
-  - 첫 전환 실패 시 현재 실행·진행 기록을 확인한 수동 복구, 단일 구성 전체로의 자동 복귀 미지원
+- 지원 구성
+  - 준비된 A/B의 순차 교체만 지원, 기존 단일 구성의 자동 전환 기능 제거
+  - 구형 단일 컨테이너가 남으면 자동 삭제 없이 중단, 실제 실행과 요청 분배 확인 필요
+  - 신규 서버의 초기화와 구형 환경의 A/B 전환은 별도 절차 필요
 - Frontend 정적 파일
   - 각 인스턴스에서 제공, 배포 중 구·신 버전 파일의 누락·혼합 가능
   - 감지 가능한 JS·CSS 로딩 실패에 새로고침 안내, 사용자 선택 전 자동 이동·요청 재전송 없음
