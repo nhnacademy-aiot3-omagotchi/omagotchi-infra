@@ -23,6 +23,8 @@
   - 안전한 요약·HTTP 상태·서비스 정보·Request ID·Trace ID 등
   - 오류의 `error.stack_trace`: 예외 종류·클래스/모듈·메서드/함수·파일명·줄 번호만 포함
     - 앱의 공통 오류 기록기에서 구성, 예외 메시지·SQL 값·소스 코드·지역 변수 제외
+    - 앱의 전송 필드: `omagotchi.error.stack_trace`, Filebeat에서 `error.stack_trace`로 이동
+    - 라이브러리 등이 기록한 기본 `error.stack_trace`는 수집 시 제거, 전용 필드가 없으면 호출 위치 미저장
     - 원인 예외 최대 4개·원인별 호출 위치 최대 12개·전체 4,096자 제한, 생략 표식 표시
     - 모든 호출 위치·모든 원인 예외의 보존 보장 아님, 전체 원본은 로컬 진단 로그에서만 확인
   - `@timestamp`: Filebeat 기본 보존, `include_fields` 목록에 중복 선언 금지
@@ -35,6 +37,9 @@
   - 호출 위치는 원문 조회용, 별도 검색 색인 미생성·기존 Template 강제 갱신 불필요
     - 근거: [Elasticsearch의 `dynamic: false`와 `_source` 보존](https://www.elastic.co/docs/reference/elasticsearch/mapping-reference/dynamic)
   - Infra·서비스 반영 이후의 새 오류부터 표시, 과거 오류의 호출 위치 복원 불가
+    - Infra 먼저 반영 권장, 구버전 앱의 기본 Stack 필드는 제외하고 나머지 오류 정보 수집 유지
+    - 전용 필드는 앱의 정제 결과를 구별하는 계약, 임의 비밀값의 자동 판별 기능 아님
+    - 근거: [Filebeat 8.19의 필드 이동과 기존 필드 제거](https://www.elastic.co/guide/en/beats/filebeat/8.19/rename-fields.html)
 - Data Stream: `logs-omagotchi-prod` 한 개·Primary Shard 한 개
 - ILM: `1일` 또는 Primary `1GB` Rollover, **Rollover 이후 3일** 경과한 Index 삭제
   - Event 발생 후 정확히 3일 삭제나 전체 저장 용량 상한을 뜻하지 않음

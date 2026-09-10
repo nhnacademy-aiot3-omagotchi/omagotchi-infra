@@ -78,17 +78,18 @@ fi
 # 중앙 오류에는 코드 위치만 보존, 원본 진단·본문·예외 메시지는 제외.
 for _ in {1..30}; do
   docker logs "${FILEBEAT_NAME}" >"${TEST_TMP_DIR}/filebeat.log" 2>&1
-  if jq -se 'any(.[]; .event.dataset == "fixture.error")' "${TEST_TMP_DIR}/filebeat.log" >/dev/null; then
+  if jq -se '[.[] | select(.event.dataset != null)] | length == 3' "${TEST_TMP_DIR}/filebeat.log" >/dev/null; then
     break
   fi
   sleep 0.5
 done
 jq -se '
   [.[] | select(.event.dataset != null)] as $events
-  | ($events | map(.event.dataset) | sort) == ["fixture.error", "fixture.http"]
+  | ($events | map(.event.dataset) | sort) == ["fixture.error", "fixture.error", "fixture.http"]
     and any($events[]; .error.stack_trace | strings | contains("ExampleService.find(ExampleService.java:42)"))
     and any($events[]; .http.request.id == "0123456789abcdef0123456789abcdef")
-    and all($events[]; .error.message == null and .http.request.body == null)
+    and any($events[]; .event.id == "raw-stack" and .error.stack_trace == null)
+    and all($events[]; .error.message == null and .http.request.body == null and .omagotchi.error == null)
 ' "${TEST_TMP_DIR}/filebeat.log" >/dev/null
 if grep -Fq PRIVATE_FIXTURE_SECRET "${TEST_TMP_DIR}/filebeat.log"; then
   echo 'Filebeat 정제 후 가짜 비밀값 잔존' >&2
