@@ -23,7 +23,7 @@ rolling_deploy() {
   command -v jq >/dev/null || return 1
   base_url="$(rolling_read SMOKE_BASE_URL "${DEPLOY_ENV}")" || return 1
   [[ "${base_url}" =~ ^https?://[^[:space:]]+$ ]] || return 1
-  rolling_ready discovery-service || { echo "Discovery 준비 상태 확인 실패. 기존 앱 유지" >&2; return 1; }
+  rolling_wait_ready discovery-service || { echo "Discovery 준비 상태 확인 실패. 기존 앱 유지" >&2; return 1; }
   mkdir -p "${INFRA_DIR}/.rollout" || return 1
   journal="${INFRA_DIR}/.rollout/${logical}.state"
   if [[ -e "${journal}" ]]; then
@@ -38,11 +38,11 @@ rolling_deploy() {
     [[ -z "$(rolling_container "${logical}-a")" && -z "$(rolling_container "${logical}-b")" ]] || {
       echo "단일·A/B 인스턴스 혼재. 자동 전환 중단: ${logical}" >&2; return 1;
     }
-    rolling_ready "${logical}" || return 1
+    rolling_wait_ready "${logical}" || return 1
     rolling_matches_image "${logical}" "$(rolling_read "${prefix}_IMAGE_TAG" "${DEPLOY_ENV}")" || return 1
     rolling_check_callers "${logical}" || return 1
   else
-    if ! rolling_ready "${logical}-a" || ! rolling_ready "${logical}-b"; then
+    if ! rolling_wait_ready "${logical}-a" || ! rolling_wait_ready "${logical}-b"; then
       echo "A/B 두 인스턴스가 모두 준비되어야 배포 가능: ${logical}" >&2
       return 1
     fi
@@ -69,7 +69,7 @@ rolling_deploy() {
       previous="$(rolling_read "${key}" "${DEPLOY_ENV}")"
       previous="${previous:-$(rolling_read "${prefix}_IMAGE_TAG" "${DEPLOY_ENV}")}"
       [[ "${previous}" =~ ^[0-9a-f]{40}$ ]] || return 1
-      rolling_ready discovery-service && rolling_ready "${peer}" || return 1
+      rolling_wait_ready discovery-service && rolling_wait_ready "${peer}" || return 1
       printf 'service=%s\ntarget=%s\nprevious=%s\ndesired=%s\nstage=prepared\n' \
         "${logical}" "${target}" "${previous}" "${desired}" >"${journal}" || return 1
       if ! rolling_drain "${logical}" "${target}"; then
@@ -109,9 +109,11 @@ rolling_deploy() {
       fi
       rolling_write "${DEPLOY_ENV}" "${key}" "${desired}" || return 1
       rolling_write "${journal}" stage verified || return 1
+      # 검증과 이미지 기록까지 끝난 자리의 미완료 표시 해제. 다음 자리의 사전 검사 실패와 구분.
+      rm -f "${journal}" || return 1
     done
   fi
-  rolling_ready "${logical}-a" && rolling_ready "${logical}-b" || return 1
+  rolling_wait_ready "${logical}-a" && rolling_wait_ready "${logical}-b" || return 1
   rolling_write "${DEPLOY_ENV}" "${prefix}_IMAGE_TAG" "${desired}" || return 1
   rm -f "${journal}" "${candidate_env_file}"
   echo "A/B 배포 완료: ${logical} (${desired})"
@@ -126,8 +128,8 @@ rolling_migrate_single() {
   for slot in a b; do
     target="${logical}-${slot}"
     key="${prefix}_$(printf '%s' "${slot}" | tr '[:lower:]' '[:upper:]')_IMAGE_TAG"
-    rolling_ready discovery-service || return 1
-    if [[ "${slot}" == b ]]; then rolling_ready "${logical}-a" || return 1; fi
+    rolling_wait_ready discovery-service || return 1
+    if [[ "${slot}" == b ]]; then rolling_wait_ready "${logical}-a" || return 1; fi
     printf 'service=%s\ntarget=%s\nprevious=%s\ndesired=%s\nstage=prepared\n' \
       "${logical}" "${target}" "${previous}" "${desired}" >"${journal}" || return 1
     rolling_write "${journal}" stage replacing || return 1
@@ -181,24 +183,35 @@ rolling_container() {
 }
 
 rolling_ready() {
-  local target="$1" container path port=8080
+  local target="$1" container path url http_status port=8080
   local paths=(/actuator/health/readiness /actuator/health)
   container="$(rolling_container "${target}")" || return 1
-  [[ -n "${container}" && "${container}" != *$'\n'* ]] || return 1
-  [[ "$(docker inspect --format '{{.State.Running}}' "${container}")" == true ]] || return 1
+  [[ -n "${container}" && "${container}" != *$'\n'* ]] || {
+    echo "준비 검사 대상 컨테이너 식별 실패: ${target}" >&2; return 1;
+  }
+  [[ "$(docker inspect --format '{{.State.Running}}' "${container}")" == true ]] || {
+    echo "준비 검사 대상의 실행 상태 확인 실패: ${target}" >&2; return 1;
+  }
   [[ "${target}" != prediction-service* ]] || paths=(/health)
   if [[ "${target}" == discovery-service ]]; then port=8761; paths=(/actuator/health); fi
   # 요청 수락 준비와 기존 의존성 Health 모두 확인. 준비 직후의 Eureka 상태 반영 대기 포함.
   for path in "${paths[@]}"; do
-    docker exec "${container}" curl --fail --silent --show-error --max-time 5 \
-      "http://127.0.0.1:${port}${path}" >/dev/null || return 1
+    url="http://127.0.0.1:${port}${path}"
+    if ! http_status="$(docker exec "${container}" curl --fail --silent --show-error --max-time 5 \
+      --output /dev/null --write-out '%{http_code}' "${url}")"; then
+      echo "준비 검사 실패: ${target} (${url}, HTTP ${http_status:-응답 없음})" >&2
+      return 1
+    fi
   done
   case "${target}" in
     gateway-service*|identity-service*|learning-service*|rule-engine-*)
       # 현재 실행의 실제 등록 확인. 초기 Health 응답만으로 배포 준비 완료 판단 금지.
       rolling_registry "${target}" | jq -e '
         .instanceId as $id | [.services[][]] | index($id) != null
-      ' >/dev/null || return 1
+      ' >/dev/null || {
+        echo "준비 검사 실패: ${target} (/actuator/registry의 현재 실행 UP 등록 미확인)" >&2
+        return 1
+      }
       ;;
   esac
 }
@@ -211,14 +224,15 @@ rolling_registry() {
     http://127.0.0.1:8080/actuator/registry
 }
 
-# 앱 기동과 Eureka 상태 반영 사이의 차이 확인. 고정 시간 대기만으로 성공 판단 제외.
+# 일시적인 Health·Eureka 조회 실패의 재확인. 제한 시간 내 복구되지 않으면 마지막 실패 내용 출력.
 rolling_wait_ready() {
-  local target="$1" deadline=$((SECONDS + 90))
+  local target="$1" deadline=$((SECONDS + 90)) last_error=""
   while ((SECONDS < deadline)); do
-    rolling_ready "${target}" 2>/dev/null && return 0
+    if last_error="$(rolling_ready "${target}" 2>&1)"; then return 0; fi
     sleep 2
   done
-  echo "기동 후 준비·의존성 확인 시간 초과: ${target}" >&2
+  echo "준비·의존성 확인 시간 초과: ${target}" >&2
+  printf '%s\n' "${last_error}" >&2
   return 1
 }
 

@@ -164,6 +164,8 @@ shellcheck scripts/*.sh tests/*.sh
 - 준비 확인: 두 자리의 실제 이미지와 배포 기록 일치, 앱 준비·의존성 Health·Discovery 정상 상태
   - 등록 앱은 현재 실행 ID가 자신의 Eureka 목록에 UP으로 반영된 상태까지 확인
   - `STARTING`·초기 Health 응답만으로 배포 준비 완료 판단 금지
+  - 일시적인 503·조회 실패는 대상별 최대 90초 동안 재확인, 복구되지 않으면 교체 중단
+  - 제한 시간 초과 시 실패 대상과 마지막 검사 내용 출력, HTTP 실패의 URL·상태 코드 포함
 - 요청 제외
   - Frontend·Gateway·Prediction: Nginx 후보 설정 검사·Reload·이전 Worker 종료 확인
     - 파일 교체·Reload 명령 실패 시 직전 파일 복구와 대상 앱 유지, 실제 설정 반영 여부 확인 필요
@@ -180,7 +182,11 @@ shellcheck scripts/*.sh tests/*.sh
 - 상태 기록
   - `deploy.env`의 `*_A_IMAGE_TAG`·`*_B_IMAGE_TAG`: 각 자리의 검증된 이미지
   - 기존 `*_IMAGE_TAG`: 두 자리 모두 성공한 마지막 배포, 같은 SHA의 설정 변경도 순차 교체
-  - `.rollout/<service>.state`: 대상·구/신 SHA·진행 단계, 정상 완료 또는 성공한 자동 복구 후 제거
+  - `.rollout/<service>.state`: 대상·구/신 SHA·진행 단계
+    - 평상시 교체: 각 자리의 분배 복귀·Smoke Test·이미지 기록 완료 후 제거
+    - 최초 전환: 두 자리 모두 완료할 때까지 유지
+  - 완료된 A 다음의 사전 검사 실패: 새 A와 기존 B 유지, 미완료 교체 기록 없이 배포 실패 처리
+    - 상태 복구 후 Workflow 재실행 가능, B부터 이어받지 않고 A부터 순차 재배포
 - 미완료 기록이 남은 경우
   - 자동 재실행 중단, 기록 삭제만으로 재시도 금지
   - 실제 실행 이미지·정상인 반대 자리·Nginx 분배 목록·Eureka 제외 상태 확인

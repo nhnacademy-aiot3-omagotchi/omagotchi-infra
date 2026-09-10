@@ -26,9 +26,30 @@ rolling_container() {
 }
 
 rolling_ready() {
+  # A 교체 완료 뒤, B 교체 직전의 Discovery·반대 자리 검사 실패.
+  if [[ "$(rolling_read IDENTITY_A_IMAGE_TAG "${DEPLOY_ENV}")" == "${new}" \
+    && "$(cat "${TEST_DIRECTORY}/containers/identity-service-b")" == "${old}" ]]; then
+    if [[ ( "$1" == identity-service-a && "${failure}" == peer-* ) \
+      || ( "$1" == discovery-service && "${failure}" == discovery-after-a ) ]]; then
+      printf 'peer-check\n' >>"${events}"
+      if [[ "${failure}" != peer-once || "$(grep -c '^peer-check$' "${events}")" == 1 ]]; then
+        echo "준비 검사 실패: $1 (HTTP 503)" >&2
+        return 1
+      fi
+    fi
+  fi
   if [[ "$1" == discovery-service ]]; then [[ "${failure}" != discovery ]]; return; fi
-  [[ -f "${TEST_DIRECTORY}/containers/$1" ]]
+  [[ -f "${TEST_DIRECTORY}/containers/$1" ]] || return 1
+  if [[ "$(cat "${TEST_DIRECTORY}/containers/$1")" == "${new}" ]]; then
+    case "${failure}" in
+      readiness:"$1"|rollback-drain:"$1"|inspect:"$1"|restarting:"$1") return 1 ;;
+    esac
+  fi
+  return 0
 }
+
+# 실제 대기 함수 사용, 시간 경과만 대체한 반복 검사.
+sleep() { SECONDS=$((SECONDS + 45)); }
 
 rolling_compose() {
   local env_file="$1" target revision count
@@ -61,15 +82,6 @@ rolling_drain() {
 rolling_admit() {
   printf 'admit:%s\n' "$2" >>"${events}"
   [[ -f "${TEST_DIRECTORY}/containers/$2" ]]
-}
-
-# 실제 rolling_start 유지, 기동 후 준비 검사 결과만 대체.
-rolling_wait_ready() {
-  if [[ "$(cat "${TEST_DIRECTORY}/containers/$1")" == "${new}" ]]; then
-    case "${failure}" in
-      readiness:"$1"|rollback-drain:"$1"|inspect:"$1"|restarting:"$1") return 1 ;;
-    esac
-  fi
 }
 
 docker() {
@@ -108,6 +120,33 @@ admit:identity-service-a
 drain:identity-service-b
 start:identity-service-b:${new}
 admit:identity-service-b" ]] || fail "한 자리씩 제외·기동·복귀 순서 위반"
+
+# Given/When: A 교체 후 반대 자리의 상태 검사에서 한 번만 발생한 503.
+reset_case
+failure="peer-once"
+rolling_deploy identity-service "${new}" >/dev/null
+# Then: 재확인 성공 후 B 교체, 완료된 A의 재생성 없음.
+[[ "$(grep -c '^peer-check$' "${events}")" == 2 ]] || fail "일시적인 503의 재확인 누락"
+[[ "$(grep -c '^start:identity-service-a:' "${events}")" == 1 ]] || fail "상태 재확인 중 완료된 A 재생성"
+[[ "$(rolling_read IDENTITY_IMAGE_TAG "${DEPLOY_ENV}")" == "${new}" ]] || fail "상태 복구 후 배포 완료 누락"
+
+# Given/When: A 교체 후 Discovery 또는 반대 자리의 상태 검사에서 지속되는 503.
+for scenario in peer-down discovery-after-a; do
+  reset_case
+  failure="${scenario}"
+  if rolling_deploy identity-service "${new}" >"${TEST_DIRECTORY}/failure.log" 2>&1; then
+    fail "반대 자리·Discovery의 지속 장애를 배포 성공 처리"
+  fi
+  # Then: B 제외·교체 없이 중단, 검증된 A 기록 유지, 미완료 표시와 구분.
+  ! grep -Eq '^(drain|start):identity-service-b' "${events}" || fail "상태 확인 실패 후 B 변경"
+  [[ "$(rolling_read IDENTITY_A_IMAGE_TAG "${DEPLOY_ENV}")" == "${new}" ]] || fail "검증된 A 이미지 기록 유실"
+  [[ "$(rolling_read IDENTITY_IMAGE_TAG "${DEPLOY_ENV}")" == "${old}" ]] || fail "부분 성공을 전체 성공으로 기록"
+  [[ ! -e "${INFRA_DIR}/.rollout/identity-service.state" ]] || fail "완료된 자리의 미완료 표시 잔류"
+  grep -Fq 'HTTP 503' "${TEST_DIRECTORY}/failure.log" || fail "마지막 상태 검사 실패 내용 누락"
+  # When/Then: 정상 복구 뒤 파일을 수동으로 삭제하지 않고 재배포 가능.
+  failure=""
+  rolling_deploy identity-service "${new}" >/dev/null || fail "상태 복구 후 재배포 차단"
+done
 
 # Given/When: 각 슬롯의 새 이미지 기동 실패.
 for slot in a b; do
@@ -162,11 +201,13 @@ if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then fail "요청 �
 ! grep -q '^start:' "${events}" || fail "요청 제외 확인 전 기존 실행 교체"
 
 # Given/When: 비정상 종료의 미완료 기록.
-reset_case
-printf 'stage=replacing\n' >"${INFRA_DIR}/.rollout/identity-service.state"
-if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then fail "미완료 상태 무시"; fi
-# Then: 원인 확인 전 추가 Container 변경 금지.
-[[ ! -s "${events}" ]] || fail "미완료 배포를 확인하기 전 변경 실행"
+for stage in replacing verified; do
+  reset_case
+  printf 'stage=%s\n' "${stage}" >"${INFRA_DIR}/.rollout/identity-service.state"
+  if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then fail "미완료 상태 무시"; fi
+  # Then: 기존 기록을 단계 이름만으로 자동 삭제하지 않고 추가 변경 차단.
+  [[ ! -s "${events}" ]] || fail "미완료 배포를 확인하기 전 변경 실행"
+done
 
 # Given/When: 한쪽 사전 장애.
 reset_case
@@ -242,9 +283,6 @@ rolling_check_callers learning-service || fail "호출 주소 전환 완료를 �
     fi
   }
 
-  # 실제 90초 대기 대신 재확인 시점만 이동, 운영 함수의 제한 시간 유지.
-  sleep() { SECONDS=$((SECONDS + 45)); }
-
   for present in true false; do
     for registry_scenario in inspect-once registry-once registry-unavailable; do
       : >"${events}"
@@ -260,6 +298,35 @@ rolling_check_callers learning-service || fail "호출 주소 전환 완료를 �
       fi
     done
   done
+)
+
+# Given: 실제 Health 검사와 대기 함수, 컨테이너 명령 결과만 대체.
+(
+  # shellcheck disable=SC1091
+  source "${SOURCE_INFRA}/scripts/rolling-deploy.sh"
+  docker() {
+    case "$1" in
+      ps) printf 'frontend-container\n' ;;
+      inspect) printf 'true\n' ;;
+      exec)
+        printf '%s\n' "${*: -1}" >>"${events}"
+        if [[ "${*: -1}" == http://127.0.0.1:8080/actuator/health ]]; then
+          printf '503'
+          return 22
+        fi
+        printf '200'
+        ;;
+      *) return 1 ;;
+    esac
+  }
+  : >"${events}"
+  # When/Then: readiness 성공·의존성 Health 실패 시 재확인 후 대상·URL·상태 출력.
+  if rolling_wait_ready frontend-a >"${TEST_DIRECTORY}/health.log" 2>&1; then
+    fail "의존성 Health의 503을 준비 완료 처리"
+  fi
+  grep -Fq 'frontend-a (http://127.0.0.1:8080/actuator/health, HTTP 503)' \
+    "${TEST_DIRECTORY}/health.log" || fail "Health 실패의 대상·URL·상태 누락"
+  [[ "$(grep -c '/actuator/health$' "${events}")" == 2 ]] || fail "실제 Health 검사 함수의 재확인 누락"
 )
 
 # Given: 실제 분배 파일 생성·교체 함수와 Nginx 명령 결과의 대역.
