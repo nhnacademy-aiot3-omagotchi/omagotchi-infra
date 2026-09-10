@@ -123,7 +123,11 @@ jq -se '
     and ($spans["8888888888888888"] | any(.attributes[]; .key == "gen_ai.usage.input_tokens" and (.value.intValue | tonumber) == 20))
     and ($spans["9999999999999999"] | any(.attributes[]; .key == "spring.ai.tool.definition.name" and .value.stringValue == "lookupStudySummary"))
     and ($spans["aaaaaaaaaaaaaaaa"] | any(.attributes[]; .key == "messaging.operation.type" and .value.stringValue == "process"))
-' "${TEST_TMP_DIR}/traces.json" >/dev/null
+' "${TEST_TMP_DIR}/traces.json" >/dev/null || {
+  echo 'Span 이름·속성의 예상 결과 불일치' >&2
+  jq -s '[.[].resourceSpans[].scopeSpans[].spans[] | {spanId, name}]' "${TEST_TMP_DIR}/traces.json" >&2
+  exit 1
+}
 
 # Spring 속성의 개별 변환·기존 OTel 속성 우선·응답 없는 호출의 보존 확인.
 jq -se '
