@@ -123,7 +123,7 @@ deploy_keys=(
   SMOKE_BASE_URL
 )
 
-# 첫 전환 전에는 없는 선택 상태, 각 슬롯 교체 시 배포 Script에서 기록
+# 자리별 마지막 성공 이미지. 기록이 없는 구성에서는 논리 서비스의 SHA 사용.
 slot_keys=(
   FRONTEND_A_IMAGE_TAG
   FRONTEND_B_IMAGE_TAG

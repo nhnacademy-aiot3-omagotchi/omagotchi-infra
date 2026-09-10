@@ -55,7 +55,6 @@ jobs:
         run: |
           docker compose \
             --profile rollout \
-            --profile legacy \
             --env-file .env.prod.example \
             --env-file deploy.env.example \
             config --quiet

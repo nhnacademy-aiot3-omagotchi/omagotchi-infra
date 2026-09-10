@@ -207,18 +207,17 @@ compose up -d --no-deps --wait --wait-timeout 300 discovery-service
 source "${ROLLING_DEPLOY_SCRIPT}"
 rolling_initialize_routes
 
-# 기존 Nginx의 첫 내부 Prediction 경로 반영. 설정 Reload는 진행 요청 유지.
+# 앱 교체 전 Nginx 준비와 설정 반영. Reload를 통한 진행 요청 유지.
 compose up -d --no-deps --wait --wait-timeout 300 nginx
 reload_nginx
 
-# 호출자의 고정 주소 해소 후 대상의 단일 이름 제거.
-# Rule → Learning은 Eureka, Learning → Prediction은 내부 Nginx 경로로 먼저 전환.
+# Rule의 ACTIVE/STANDBY 역할에 따른 순차 교체.
 rollout_rule_engine_infra "${DEPLOY_ENV}" || {
-  echo "Rule Engine 순차 배포 실패. 일반 앱 전환 중단, A/B 상태 확인 필요" >&2
+  echo "Rule Engine 순차 배포 실패. 일반 앱 배포 중단, A/B 상태 확인 필요" >&2
   exit 1
 }
 
-# 같은 Lock 아래 서비스별 한 자리씩 교체. Learning의 호출 주소 전환 후 Prediction 교체.
+# 같은 Lock 아래 서비스별 한 자리씩 교체.
 for application in gateway-service frontend identity-service learning-service prediction-service; do
   case "${application}" in
     gateway-service) image_key=GATEWAY_IMAGE_TAG ;;
@@ -236,9 +235,6 @@ done
 wait_eureka_application "${DEPLOY_ENV}" "GATEWAY-SERVICE"
 wait_eureka_application "${DEPLOY_ENV}" "IDENTITY-SERVICE"
 wait_eureka_application "${DEPLOY_ENV}" "LEARNING-SERVICE"
-
-# 첫 전환의 단일 인스턴스는 해당 서비스 전환 성공 후에만 정리.
-# 전체 remove-orphans에 의한 정상 인스턴스 조기 삭제 금지.
 
 # 내부 서비스 검증 완료 이후 외부 진입점 반영.
 compose up -d --no-deps --wait --wait-timeout 300 nginx cloudflared

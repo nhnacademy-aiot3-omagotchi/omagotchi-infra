@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 
 # 일반 앱의 고정 A/B 배포 함수. deploy-infra.sh·deploy-service.sh의 배포 Lock 안에서 호출.
-# rolling_deploy·rolling_migrate_single: 평상시 교체와 최초 전환 순서.
+# rolling_deploy: 준비된 A/B의 순차 교체와 실패 슬롯 복구.
 # 나머지 함수: Compose·Eureka·Nginx 상태 확인과 변경.
 # 이 파일을 직접 실행하지 않고 배포 진입점에서 source로 사용.
 # 호출 전제: 공용 배포 Lock 획득, Bash의 pipefail 설정.
 # 호출자 제공 경로: INFRA_DIR·DEPLOY_ENV·SECRET_ENV·COMPOSE_SCRIPT·SMOKE_SCRIPT.
 
-# 진입 흐름: 사전 확인 → 첫 전환 또는 A/B 교체 → 두 자리의 성공 버전 확정.
+# 진입 흐름: 사전 확인 → A/B 순차 교체 → 두 자리의 성공 버전 확정.
 rolling_deploy() {
-  local logical="$1" desired="$2" prefix journal candidate_env_file slot target peer key previous legacy
+  local logical="$1" desired="$2" prefix journal candidate_env_file slot target peer key previous
   local failed=false base_url container container_status
   case "${logical}" in
     frontend) prefix=FRONTEND ;;
@@ -32,123 +32,80 @@ rolling_deploy() {
   fi
   candidate_env_file="${journal}.env"
   cp "${DEPLOY_ENV}" "${candidate_env_file}" || return 1
-  legacy="$(rolling_container "${logical}")" || return 1
-  if [[ -n "${legacy}" ]]; then
-    # 첫 전환은 A 생성 → 단일 인스턴스 제외·종료 → B 생성, 최대 두 개 유지.
-    [[ -z "$(rolling_container "${logical}-a")" && -z "$(rolling_container "${logical}-b")" ]] || {
-      echo "단일·A/B 인스턴스 혼재. 자동 전환 중단: ${logical}" >&2; return 1;
-    }
-    rolling_wait_ready "${logical}" || return 1
-    rolling_matches_image "${logical}" "$(rolling_read "${prefix}_IMAGE_TAG" "${DEPLOY_ENV}")" || return 1
-    rolling_check_callers "${logical}" || return 1
-  else
-    if ! rolling_wait_ready "${logical}-a" || ! rolling_wait_ready "${logical}-b"; then
-      echo "A/B 두 인스턴스가 모두 준비되어야 배포 가능: ${logical}" >&2
-      return 1
-    fi
-    for slot in a b; do
-      key="${prefix}_$(printf '%s' "${slot}" | tr '[:lower:]' '[:upper:]')_IMAGE_TAG"
-      previous="$(rolling_read "${key}" "${DEPLOY_ENV}")"
-      previous="${previous:-$(rolling_read "${prefix}_IMAGE_TAG" "${DEPLOY_ENV}")}"
-      rolling_matches_image "${logical}-${slot}" "${previous}" || return 1
-    done
+  container="$(rolling_container "${logical}")" || return 1
+  [[ -z "${container}" ]] || {
+    echo "구형 단일 컨테이너 존재. 실행 상태 확인 후 A/B 배포 필요: ${logical}" >&2; return 1;
+  }
+  if ! rolling_wait_ready "${logical}-a" || ! rolling_wait_ready "${logical}-b"; then
+    echo "A/B 두 인스턴스가 모두 준비되어야 배포 가능: ${logical}" >&2
+    return 1
   fi
+  for slot in a b; do
+    key="${prefix}_$(printf '%s' "${slot}" | tr '[:lower:]' '[:upper:]')_IMAGE_TAG"
+    previous="$(rolling_read "${key}" "${DEPLOY_ENV}")"
+    previous="${previous:-$(rolling_read "${prefix}_IMAGE_TAG" "${DEPLOY_ENV}")}"
+    rolling_matches_image "${logical}-${slot}" "${previous}" || return 1
+  done
   rolling_write "${candidate_env_file}" "${prefix}_A_IMAGE_TAG" "${desired}" || return 1
   rolling_write "${candidate_env_file}" "${prefix}_B_IMAGE_TAG" "${desired}" || return 1
   rolling_compose "${candidate_env_file}" config --quiet || return 1
   rolling_compose "${candidate_env_file}" pull "${logical}-a" "${logical}-b" || return 1
 
-  if [[ -n "${legacy}" ]]; then
-    rolling_migrate_single "${logical}" "${desired}" "${prefix}" "${candidate_env_file}" "${journal}" "${base_url}" || return 1
-  else
-    for slot in a b; do
-      target="${logical}-${slot}"
-      peer="${logical}-b"
-      [[ "${slot}" != b ]] || peer="${logical}-a"
-      key="${prefix}_$(printf '%s' "${slot}" | tr '[:lower:]' '[:upper:]')_IMAGE_TAG"
-      previous="$(rolling_read "${key}" "${DEPLOY_ENV}")"
-      previous="${previous:-$(rolling_read "${prefix}_IMAGE_TAG" "${DEPLOY_ENV}")}"
-      [[ "${previous}" =~ ^[0-9a-f]{40}$ ]] || return 1
-      rolling_wait_ready discovery-service && rolling_wait_ready "${peer}" || return 1
-      printf 'service=%s\ntarget=%s\nprevious=%s\ndesired=%s\nstage=prepared\n' \
-        "${logical}" "${target}" "${previous}" "${desired}" >"${journal}" || return 1
-      if ! rolling_drain "${logical}" "${target}"; then
-        rolling_admit "${logical}" "${target}" || return 1
-        rm -f "${journal}" "${candidate_env_file}"
-        return 1
+  for slot in a b; do
+    target="${logical}-${slot}"
+    peer="${logical}-b"
+    [[ "${slot}" != b ]] || peer="${logical}-a"
+    key="${prefix}_$(printf '%s' "${slot}" | tr '[:lower:]' '[:upper:]')_IMAGE_TAG"
+    previous="$(rolling_read "${key}" "${DEPLOY_ENV}")"
+    previous="${previous:-$(rolling_read "${prefix}_IMAGE_TAG" "${DEPLOY_ENV}")}"
+    [[ "${previous}" =~ ^[0-9a-f]{40}$ ]] || return 1
+    rolling_wait_ready discovery-service && rolling_wait_ready "${peer}" || return 1
+    printf 'service=%s\ntarget=%s\nprevious=%s\ndesired=%s\nstage=prepared\n' \
+      "${logical}" "${target}" "${previous}" "${desired}" >"${journal}" || return 1
+    if ! rolling_drain "${logical}" "${target}"; then
+      rolling_admit "${logical}" "${target}" || return 1
+      rm -f "${journal}" "${candidate_env_file}"
+      return 1
+    fi
+    rolling_write "${journal}" stage replacing || return 1
+    failed=false
+    if rolling_start "${candidate_env_file}" "${target}" "${desired}"; then
+      rolling_admit "${logical}" "${target}" || failed=true
+    else
+      failed=true
+    fi
+    # 외부 공개 경로의 회귀 확인 후에만 다음 자리로 진행.
+    if [[ "${failed}" == false ]]; then "${SMOKE_SCRIPT}" "${base_url}" || failed=true; fi
+    if [[ "${failed}" == true ]]; then
+      echo "슬롯 교체 실패, 다른 슬롯 유지: ${target}" >&2
+      # 준비 검사 실패와 실행 실패의 구분. 이미 요청을 받는 새 실행의 제외 확인 후 복구.
+      container="$(rolling_container "${target}")" || return 1
+      [[ "${container}" != *$'\n'* ]] || return 1
+      if [[ -n "${container}" ]]; then
+        container_status="$(docker inspect --format '{{.State.Status}}' "${container}")" || return 1
+        case "${container_status}" in
+          running) rolling_drain "${logical}" "${target}" || return 1 ;;
+          created|exited|dead) ;; # 실행되지 않았거나 종료된 컨테이너의 직접 복구.
+          *)
+            echo "복구 전 실행 상태 확인 필요: ${target} (${container_status}). 현재 실행·기록 유지" >&2
+            return 1
+            ;;
+        esac
       fi
-      rolling_write "${journal}" stage replacing || return 1
-      failed=false
-      if rolling_start "${candidate_env_file}" "${target}" "${desired}"; then
-        rolling_admit "${logical}" "${target}" || failed=true
-      else
-        failed=true
-      fi
-      # 외부 공개 경로의 회귀 확인 후에만 다음 자리로 진행.
-      if [[ "${failed}" == false ]]; then "${SMOKE_SCRIPT}" "${base_url}" || failed=true; fi
-      if [[ "${failed}" == true ]]; then
-        echo "슬롯 교체 실패, 다른 슬롯 유지: ${target}" >&2
-        # 준비 검사 실패와 실행 실패의 구분. 이미 요청을 받는 새 실행의 제외 확인 후 복구.
-        container="$(rolling_container "${target}")" || return 1
-        [[ "${container}" != *$'\n'* ]] || return 1
-        if [[ -n "${container}" ]]; then
-          container_status="$(docker inspect --format '{{.State.Status}}' "${container}")" || return 1
-          case "${container_status}" in
-            running) rolling_drain "${logical}" "${target}" || return 1 ;;
-            created|exited|dead) ;; # 실행되지 않았거나 종료된 컨테이너의 직접 복구.
-            *)
-              echo "복구 전 실행 상태 확인 필요: ${target} (${container_status}). 현재 실행·기록 유지" >&2
-              return 1
-              ;;
-          esac
-        fi
-        rolling_write "${candidate_env_file}" "${key}" "${previous}" || return 1
-        rolling_start "${candidate_env_file}" "${target}" "${previous}" && rolling_admit "${logical}" "${target}" || return 1
-        rm -f "${journal}" "${candidate_env_file}"
-        return 1
-      fi
-      rolling_write "${DEPLOY_ENV}" "${key}" "${desired}" || return 1
-      rolling_write "${journal}" stage verified || return 1
-      # 검증과 이미지 기록까지 끝난 자리의 미완료 표시 해제. 다음 자리의 사전 검사 실패와 구분.
-      rm -f "${journal}" || return 1
-    done
-  fi
+      rolling_write "${candidate_env_file}" "${key}" "${previous}" || return 1
+      rolling_start "${candidate_env_file}" "${target}" "${previous}" && rolling_admit "${logical}" "${target}" || return 1
+      rm -f "${journal}" "${candidate_env_file}"
+      return 1
+    fi
+    rolling_write "${DEPLOY_ENV}" "${key}" "${desired}" || return 1
+    rolling_write "${journal}" stage verified || return 1
+    # 검증과 이미지 기록까지 끝난 자리의 미완료 표시 해제. 다음 자리의 사전 검사 실패와 구분.
+    rm -f "${journal}" || return 1
+  done
   rolling_wait_ready "${logical}-a" && rolling_wait_ready "${logical}-b" || return 1
   rolling_write "${DEPLOY_ENV}" "${prefix}_IMAGE_TAG" "${desired}" || return 1
   rm -f "${journal}" "${candidate_env_file}"
   echo "A/B 배포 완료: ${logical} (${desired})"
-}
-
-# 최초 전환 전용 순서: 단일+A → A → A+B. 어느 단계에서든 실패하면 현재 실행·기록 유지.
-# 평상시 슬롯 교체와 달리, 단일 구성 전체로 자동 복귀하는 기능은 제공하지 않음.
-rolling_migrate_single() {
-  local logical="$1" desired="$2" prefix="$3" candidate_env_file="$4" journal="$5" base_url="$6"
-  local slot target key previous
-  previous="$(rolling_read "${prefix}_IMAGE_TAG" "${DEPLOY_ENV}")" || return 1
-  for slot in a b; do
-    target="${logical}-${slot}"
-    key="${prefix}_$(printf '%s' "${slot}" | tr '[:lower:]' '[:upper:]')_IMAGE_TAG"
-    rolling_wait_ready discovery-service || return 1
-    if [[ "${slot}" == b ]]; then rolling_wait_ready "${logical}-a" || return 1; fi
-    printf 'service=%s\ntarget=%s\nprevious=%s\ndesired=%s\nstage=prepared\n' \
-      "${logical}" "${target}" "${previous}" "${desired}" >"${journal}" || return 1
-    rolling_write "${journal}" stage replacing || return 1
-    if ! rolling_start "${candidate_env_file}" "${target}" "${desired}" \
-      || ! rolling_admit "${logical}" "${target}" \
-      || ! "${SMOKE_SCRIPT}" "${base_url}"; then
-      echo "첫 전환 실패. 현재 실행과 진행 기록 확인 필요: ${journal}" >&2
-      return 1
-    fi
-    if [[ "${slot}" == a ]]; then
-      # 새 A의 외부 응답까지 확인한 뒤 기존 단일 실행 종료. 세 번째 실행 생성 방지.
-      rolling_write "${journal}" stage retiring-legacy || return 1
-      rolling_drain "${logical}" "${logical}" || return 1
-      rolling_compose "${DEPLOY_ENV}" stop "${logical}" || return 1
-      rolling_compose "${DEPLOY_ENV}" rm -f "${logical}" || return 1
-    fi
-    rolling_write "${DEPLOY_ENV}" "${key}" "${desired}" || return 1
-    rolling_write "${journal}" stage verified || return 1
-  done
 }
 
 rolling_compose() {
@@ -299,7 +256,7 @@ rolling_wait_clients() {
   return 1
 }
 
-# Git 제외 Directory 안의 대상 파일 생성. 첫 전환 전의 단일 이름도 지원.
+# Git 제외 Directory 안의 A/B 분배 목록 생성. 기존 목록은 유지.
 rolling_initialize_routes() {
   local directory="${INFRA_DIR}/nginx/conf.d/runtime" group logical target
   mkdir -p "${directory}" || return 1
@@ -309,7 +266,7 @@ rolling_initialize_routes() {
     logical="${group}-service"
     [[ "${group}" != frontend ]] || logical=frontend
     : >"${directory}/${group}.servers" || return 1
-    for target in "${logical}" "${logical}-a" "${logical}-b"; do
+    for target in "${logical}-a" "${logical}-b"; do
       if rolling_ready "${target}" 2>/dev/null; then
         printf 'server %s:8080 resolve;\n' "${target}" >>"${directory}/${group}.servers" || return 1
       fi
@@ -428,30 +385,4 @@ rolling_start() {
     --wait --wait-timeout 300 "${target}" || return 1
   rolling_matches_image "${target}" "${expected}" || return 1
   rolling_wait_ready "${target}"
-}
-
-# 첫 전환에서 단일 DNS 이름을 없애기 전, 실제 호출자의 새 주소 적용 확인.
-rolling_check_callers() {
-  local logical="$1" target container expected count=0 targets=()
-  case "${logical}" in
-    learning-service)
-      targets=(rule-engine-a rule-engine-b)
-      expected='LEARNING_BASE_URL=lb://learning-service'
-      ;;
-    prediction-service)
-      targets=(learning-service learning-service-a learning-service-b)
-      expected='PREDICTION_SERVICE_BASE_URL=http://nginx:8081'
-      ;;
-    *) return 0 ;;
-  esac
-  for target in "${targets[@]}"; do
-    container="$(rolling_container "${target}")" || return 1
-    [[ -n "${container}" ]] || continue
-    if [[ "$(docker inspect --format "{{range .Config.Env}}{{if eq . \"${expected}\"}}true{{end}}{{end}}" "${container}")" != true ]]; then
-      echo "호출 주소 선행 전환 필요: ${target} → ${logical}. 기존 단일 실행 유지" >&2
-      return 1
-    fi
-    count=$((count + 1))
-  done
-  ((count > 0)) || { echo "호출자 실행 확인 실패: ${logical}" >&2; return 1; }
 }

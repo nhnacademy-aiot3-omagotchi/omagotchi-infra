@@ -103,7 +103,7 @@ assert_compose_contract '
   (.services.nginx.tmpfs | index("/var/log/nginx:size=10m,mode=0700")) != null
 ' "Nginx 상세 오류 로그의 제한 용량 tmpfs가 누락되었습니다."
 
-# 실제 Compose 병합 결과의 A/B 구분과 단일 정의의 기본 실행 제외 확인.
+# 실제 Compose 병합 결과의 A/B 구분과 로그 수집 확인.
 assert_compose_contract '
   .services as $services |
   all(["frontend", "gateway-service", "identity-service", "learning-service", "prediction-service"][];
@@ -114,7 +114,7 @@ assert_compose_contract '
     and $services[$name + "-a"].environment.SERVICE_NODE_NAME != $services[$name + "-b"].environment.SERVICE_NODE_NAME
     and $services[$name + "-a"].labels["co.elastic.logs/enabled"] == "true"
     and $services[$name + "-b"].labels["co.elastic.logs/enabled"] == "true")
-' "A/B 구분·로그 수집 또는 기존 단일 정의의 기본 실행 제외 오류."
+' "A/B 구분·로그 수집 또는 실행 대상 오류."
 
 # 슬롯별 상태만 바꾼 경우 반대 자리 이미지와 최종 논리 SHA의 독립성 확인.
 printf 'GATEWAY_A_IMAGE_TAG=1111111111111111111111111111111111111111\n' >>"${deploy_env}"

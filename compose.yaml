@@ -14,7 +14,7 @@ x-tracing-environment: &tracing-environment
   TRACING_SAMPLING_PROBABILITY: "${TRACING_SAMPLING_PROBABILITY:-0.1}"
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://omagotchi-otel-collector:4318/v1/traces"
 
-# 실행 대상을 만들지 않는 앱별 공통 설정. 최초 전환용 단일 정의와 A/B에서 공유.
+# 실행 대상을 만들지 않는 앱별 공통 설정. A/B에서 공유.
 x-identity-service: &identity-service
   stop_grace_period: 2m
   labels:
@@ -165,6 +165,8 @@ x-learning-service: &learning-service
     - omagotchi-net
   restart: unless-stopped
 
+# Learning의 예측 요청 처리. Eureka 대신 내부 Nginx를 통한 A/B 분배.
+# Spring Actuator 미사용, 8080 포트의 /health로 준비 상태 확인.
 x-prediction-service: &prediction-service
   stop_grace_period: 2m
   labels:
@@ -194,6 +196,7 @@ x-prediction-service: &prediction-service
     - omagotchi-net
   restart: unless-stopped
 
+# 외부 API 진입점. Eureka 조회를 통한 내부 서비스 호출.
 x-gateway-service: &gateway-service
   stop_grace_period: 2m
   labels:
@@ -318,37 +321,6 @@ services:
       - omagotchi-net
     restart: unless-stopped
 
-  identity-service:
-    <<: *identity-service
-    # 기존 단일 실행의 최초 전환용 정의. 자동 복구 대상이 아닌 종료 대상.
-    profiles: [legacy]
-
-  learning-service:
-    <<: *learning-service
-    # 기존 단일 실행의 최초 전환용 정의. 자동 복구 대상이 아닌 종료 대상.
-    profiles: [legacy]
-
-  # 공부시간 예측 전용 Python 서비스.
-  # Learning이 계산한 피처를 받아 예측값만 돌려주는 얇은 서비스로, 원시 학습 기록을 직접 조회하지 않는다.
-  #
-  # Spring 서비스와 다른 점:
-  # - Eureka 등록 제외, Learning의 내부 Nginx 주소를 통한 A/B 분배.
-  # - Actuator가 없어 healthcheck 경로가 /health다.
-  # - SERVER_PORT를 읽지 않고 내부 포트 8080이 고정이다.
-  #
-  # Learning은 Prediction 장애를 호출 시점의 오류로 전파할 뿐, 기동에는 의존하지 않으므로 depends_on을 걸지 않는다.
-  prediction-service:
-    <<: *prediction-service
-    # 기존 단일 실행의 최초 전환용 정의. 자동 복구 대상이 아닌 종료 대상.
-    profiles: [legacy]
-
-  # 외부 API 요청의 단일 진입점
-  # Eureka에서 rule-service를 조회해 lb://rule-service로 전달
-  gateway-service:
-    <<: *gateway-service
-    # 기존 단일 실행의 최초 전환용 정의. 자동 복구 대상이 아닌 종료 대상.
-    profiles: [legacy]
-
   rule-engine-a:
     stop_grace_period: 2m
     labels:
@@ -464,12 +436,6 @@ services:
     networks:
       - omagotchi-net
     restart: unless-stopped
-
-  frontend:
-    <<: *frontend
-    # 기존 단일 실행의 최초 전환용 정의. 자동 복구 대상이 아닌 종료 대상.
-    profiles: [legacy]
-    container_name: omagotchi-frontend
 
   # cloudflared가 전달한 요청을 프론트 또는 Gateway로 분기
   nginx:

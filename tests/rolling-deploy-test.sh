@@ -55,7 +55,6 @@ rolling_compose() {
   local env_file="$1" target revision count
   shift
   printf 'compose:%s\n' "$*" >>"${events}"
-  if [[ "$1" == rm ]]; then rm -f "${TEST_DIRECTORY}/containers/${*: -1}"; fi
   [[ -f "${env_file}" ]] || return 1
   if [[ "$1" == up ]]; then
     target="${*: -1}"
@@ -93,7 +92,7 @@ docker() {
       [[ "${failure}" != "inspect:${target}" ]] || return 1
       if [[ "${failure}" == "restarting:${target}" ]]; then printf 'restarting\n'; else printf 'running\n'; fi
       ;;
-    *) [[ "${failure}" == old-caller ]] || printf 'true\n' ;;
+    *) return 1 ;;
   esac
 }
 
@@ -221,42 +220,21 @@ failure=discovery
 if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then fail "Discovery 장애 중 배포 허용"; fi
 [[ ! -s "${events}" ]] || fail "Discovery 장애 중 Container 변경 실행"
 
-# Given/When: 단일 실행에서 A/B로 첫 전환.
-reset_case
-rm "${TEST_DIRECTORY}/containers/identity-service-a" "${TEST_DIRECTORY}/containers/identity-service-b"
-printf '%s\n' "${old}" >"${TEST_DIRECTORY}/containers/identity-service"
-rolling_deploy identity-service "${new}" >/dev/null
-# Then: 새 A 준비 뒤 단일 종료, 두 실행을 초과하지 않는 B 생성.
-[[ ! -f "${TEST_DIRECTORY}/containers/identity-service" ]] || fail "기존 단일 실행의 종료 누락"
-[[ -f "${TEST_DIRECTORY}/containers/identity-service-a" && -f "${TEST_DIRECTORY}/containers/identity-service-b" ]] || fail "A/B 전환 누락"
-
-# Given/When: 첫 전환에서 A 또는 B 기동 실패.
-for slot in a b; do
+# Given/When: 구형 단일 컨테이너만 있거나 A/B와 함께 남은 상태.
+for configuration in single mixed; do
   reset_case
-  rm "${TEST_DIRECTORY}/containers/identity-service-a" "${TEST_DIRECTORY}/containers/identity-service-b"
-  printf '%s\n' "${old}" >"${TEST_DIRECTORY}/containers/identity-service"
-  failure="start:identity-service-${slot}"
-  if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then fail "첫 전환 실패를 성공 처리"; fi
-  # Then: 전체 성공 처리·단일 구성 자동 복귀 없이, 정상 실행과 복구 판단용 기록 유지.
-  [[ "$(rolling_read IDENTITY_IMAGE_TAG "${DEPLOY_ENV}")" == "${old}" ]] || fail "실패한 첫 전환의 성공 SHA 기록"
-  [[ -s "${INFRA_DIR}/.rollout/identity-service.state" ]] || fail "첫 전환 실패 기록 유실"
-  if [[ "${slot}" == a ]]; then
-    [[ -f "${TEST_DIRECTORY}/containers/identity-service" ]] || fail "새 A 준비 전 단일 실행 제거"
-    ! grep -Fq 'start:identity-service-b:' "${events}" || fail "새 A 실패 후 B 생성"
-  else
-    [[ "$(cat "${TEST_DIRECTORY}/containers/identity-service-a")" == "${new}" ]] || fail "B 실패 후 정상 A 유실"
-    [[ ! -f "${TEST_DIRECTORY}/containers/identity-service" ]] || fail "B 실패 후 단일 구성 자동 복귀"
+  if [[ "${configuration}" == single ]]; then
+    rm "${TEST_DIRECTORY}/containers/identity-service-a" "${TEST_DIRECTORY}/containers/identity-service-b"
   fi
+  printf '%s\n' "${old}" >"${TEST_DIRECTORY}/containers/identity-service"
+  if rolling_deploy identity-service "${new}" >/dev/null 2>&1; then
+    fail "구형 단일 컨테이너가 남은 배포 허용"
+  fi
+  # Then: 자동 전환·삭제 없이 기존 실행 보존, 추가 Compose 변경 없음.
+  [[ -f "${TEST_DIRECTORY}/containers/identity-service" ]] || fail "구형 단일 컨테이너의 자동 삭제"
+  [[ ! -s "${events}" ]] || fail "지원하지 않는 구성에서 Compose 변경 실행"
 done
-
-# Given/When: 호출자의 고정 주소가 남은 첫 전환.
-printf '%s\n' "${old}" >"${TEST_DIRECTORY}/containers/rule-engine-a"
-printf '%s\n' "${old}" >"${TEST_DIRECTORY}/containers/rule-engine-b"
-failure="old-caller"
-if rolling_check_callers learning-service >/dev/null 2>&1; then fail "고정 주소 호출자를 남긴 단일 실행 제거 허용"; fi
-# Then: 두 호출자 모두 새 주소로 전환한 경우에만 허용.
-failure=""
-rolling_check_callers learning-service || fail "호출 주소 전환 완료를 인식하지 못했습니다."
+reset_case
 
 # Given: Registry 편입·제외 확인 중 일시적 조회 실패와 지속 장애.
 (

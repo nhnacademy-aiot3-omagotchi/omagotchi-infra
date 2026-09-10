@@ -99,7 +99,7 @@ while IFS= read -r expression; do
   if [[ "${expression}" =~ ^\$\{(TRACING_EXPORT_ENABLED|TRACING_SAMPLING_PROBABILITY):-.*\}$ ]]; then
     continue
   fi
-  # 첫 전환의 슬롯 상태가 없을 때만 기존 논리 SHA 사용. 실제 해석은 Compose 계약 테스트 담당.
+  # 자리별 이미지 기록이 없을 때 논리 SHA 사용. 실제 해석은 Compose 계약 테스트 담당.
   if [[ "${expression}" =~ ^\$\{(FRONTEND|GATEWAY|IDENTITY|LEARNING|PREDICTION)_[AB]_IMAGE_TAG:-\$\{ ]]; then
     continue
   fi
