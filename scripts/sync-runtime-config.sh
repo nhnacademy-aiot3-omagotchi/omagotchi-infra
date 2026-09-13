@@ -201,40 +201,16 @@ if ! DEPLOY_ENV_FILE="${DEPLOY_ENV}" \
   exit 1
 fi
 
-# 관측 설정 도입 전에는 생략, 도입 이후의 일부·전체 누락은 교체 전에 차단.
-if grep -Eq '^[[:space:]]*(export[[:space:]]+)?ELASTICSEARCH_(URL|USERNAME|PASSWORD)[[:space:]]*=' \
-  "${SECRET_ENV}" "${candidate}"; then
-  if ! SECRET_ENV_FILE="${candidate}" \
-    "${INFRA_DIR}/scripts/observability-compose.sh" config --quiet \
-    >"${compose_validation_output}" 2>&1; then
-    echo "후보 관측 설정의 Compose 검증에 실패했습니다. 기존 설정을 유지하며 상세 출력은 생략합니다." >&2
-    exit 1
-  fi
-fi
-# 알림은 선택 도입. 도입 시 두 항목 동시 선언, 도입 이후 누락·빈 값 차단.
-if grep -Eq '^[[:space:]]*(export[[:space:]]+)?OPS_TELEGRAM_(BOT_TOKEN|CHAT_ID)[[:space:]]*=' \
-  "${SECRET_ENV}" "${candidate}"; then
-  if ! SECRET_ENV_FILE="${candidate}" \
-    "${INFRA_DIR}/scripts/observability-compose.sh" --profile alerts config --format json \
-    2>"${compose_validation_output}" \
-    | jq -e '.services.elastalert.environment | [.OPS_TELEGRAM_BOT_TOKEN, .OPS_TELEGRAM_CHAT_ID]
-        | all(. != null and length > 0)' >/dev/null 2>>"${compose_validation_output}"; then
-    echo "후보 운영 알림 설정의 검증에 실패했습니다. Bot Token·Chat ID 확인 필요, 기존 설정 유지." >&2
-    exit 1
-  fi
-fi
-# Grafana 도입 이후 관리자 비밀번호·운영 알림 설정의 누락 차단.
-if grep -Eq '^[[:space:]]*(export[[:space:]]+)?GRAFANA_ADMIN_PASSWORD[[:space:]]*=' \
-  "${SECRET_ENV}" "${candidate}"; then
-  if ! SECRET_ENV_FILE="${candidate}" \
-    "${INFRA_DIR}/scripts/observability-compose.sh" --profile metrics config --format json \
-    2>"${compose_validation_output}" \
-    | jq -e '.services.grafana.environment
-        | [.GF_SECURITY_ADMIN_PASSWORD, .OPS_TELEGRAM_BOT_TOKEN, .OPS_TELEGRAM_CHAT_ID]
-        | all(. != null and length > 0)' >/dev/null 2>>"${compose_validation_output}"; then
-    echo "후보 Grafana 설정의 검증에 실패했습니다. 관리자 비밀번호·운영 알림 설정 확인 필요, 기존 설정 유지." >&2
-    exit 1
-  fi
+# 현재 운영 구성의 관측 도구 6개 검증. 과거 단계별 선택 도입 분기 제거.
+if ! SECRET_ENV_FILE="${candidate}" \
+  "${INFRA_DIR}/scripts/observability-compose.sh" --profile alerts --profile metrics --profile tracing config --format json \
+  2>"${compose_validation_output}" \
+  | jq -e '[.services.elastalert.environment.OPS_TELEGRAM_BOT_TOKEN,
+             .services.elastalert.environment.OPS_TELEGRAM_CHAT_ID,
+             .services.grafana.environment.GF_SECURITY_ADMIN_PASSWORD]
+           | all(type == "string" and length > 0)' >/dev/null 2>>"${compose_validation_output}"; then
+  echo "후보 관측 설정 검증 실패. Elasticsearch·Telegram·Grafana 필수 설정 확인 필요, 기존 설정 유지." >&2
+  exit 1
 fi
 rm -f -- "${compose_validation_output}"
 compose_validation_output=""
