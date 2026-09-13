@@ -12,7 +12,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 공용 배포 잠금 대기 최대 30분과 SSH·설정 검증 시간 포함.
+    timeout-minutes: 40
 
     environment:
       name: production

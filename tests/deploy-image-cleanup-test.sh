@@ -14,6 +14,8 @@ fail() {
 # 실제 Docker 삭제 대신 호출 대상과 배포 상태를 기록하는 대역 사용.
 # shellcheck disable=SC1091
 source "${INFRA_DIR}/scripts/deploy-service.sh"
+# shellcheck disable=SC1091
+source "${INFRA_DIR}/scripts/rolling-deploy.sh"
 
 current_sha="$(printf '%040d' 3)"
 previous_sha="$(printf '%040d' 2)"
@@ -116,7 +118,6 @@ SCRIPT_DIR="${TEST_TMP_DIR}/scripts"
 mkdir -p "${SCRIPT_DIR}"
 cat >"${SCRIPT_DIR}/rolling-deploy.sh" <<'EOF'
 rolling_initialize_routes() { :; }
-rolling_read() { read_env "$@"; }
 rolling_deploy() {
   printf 'rolling\n' >>"${events_file}"
   [[ "${failure}" != rolling ]] || return 1
@@ -130,7 +131,7 @@ acquire_deploy_lock() {
 
 cleanup_service_images() {
   # 정리 시점에 검증 완료 SHA 확정 여부 확인.
-  printf 'cleanup:%s:%s\n' "$*" "$(read_env FRONTEND_IMAGE_TAG "${DEPLOY_ENV}")" >>"${events_file}"
+  printf 'cleanup:%s:%s\n' "$*" "$(rolling_read FRONTEND_IMAGE_TAG "${DEPLOY_ENV}")" >>"${events_file}"
   [[ "${failure}" != cleanup ]]
 }
 
@@ -147,7 +148,7 @@ for failure in none rolling cleanup; do
 
   if [[ "${failure}" == none || "${failure}" == cleanup ]]; then
     [[ "${result}" == 0 ]] || fail "정상 배포 또는 정리 실패가 배포 실패로 처리됐습니다: ${failure}"
-    [[ "$(read_env FRONTEND_IMAGE_TAG "${DEPLOY_ENV}")" == "${current_sha}" ]] ||
+    [[ "$(rolling_read FRONTEND_IMAGE_TAG "${DEPLOY_ENV}")" == "${current_sha}" ]] ||
       fail "성공한 배포의 SHA가 확정되지 않았습니다."
     expected="$(printf 'lock\nrolling\ncleanup:frontend %s %s:%s' \
       "${current_sha}" "${previous_sha}" "${current_sha}")"
@@ -158,7 +159,7 @@ for failure in none rolling cleanup; do
     fi
   else
     [[ "${result}" != 0 ]] || fail "실패한 배포가 성공으로 처리됐습니다: ${failure}"
-    [[ "$(read_env FRONTEND_IMAGE_TAG "${DEPLOY_ENV}")" == "${previous_sha}" ]] ||
+    [[ "$(rolling_read FRONTEND_IMAGE_TAG "${DEPLOY_ENV}")" == "${previous_sha}" ]] ||
       fail "실패한 배포에서 기존 확정 SHA가 변경됐습니다."
     if grep -Fq 'cleanup:' "${events_file}"; then
       fail "실패한 배포에서 이미지 정리가 실행됐습니다: ${failure}"

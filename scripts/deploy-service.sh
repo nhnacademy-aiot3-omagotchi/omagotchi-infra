@@ -20,10 +20,12 @@ COMPOSE_SCRIPT="${SCRIPT_DIR}/compose.sh"
 SMOKE_SCRIPT="${SCRIPT_DIR}/smoke-test.sh"
 RULE_ENGINE_SCRIPT="${SCRIPT_DIR}/rule-engine.sh"
 LOCK_FILE="${ROOT_DIR}/.omagotchi-deploy.lock"
-DEPLOY_LOCK_WAIT_SECONDS=600
+# 여러 저장소의 연속 배포를 위한 최대 30분 대기. 잠금 획득 후의 실행 시간과 별개.
+DEPLOY_LOCK_WAIT_SECONDS=1800
 
 usage() {
   echo "사용법: $0 <service> <40-character-commit-sha>" >&2
+  echo "Rule 누락 인스턴스 복구: $0 rule-service --recover" >&2
   echo "서비스: frontend | discovery-service | gateway-service | identity-service | learning-service | rule-service | prediction-service" >&2
 }
 
@@ -57,43 +59,13 @@ acquire_deploy_lock() {
   return 1
 }
 
-# deploy.env의 단일 Key 조회.
-# Shell source 미사용 목적: 파일 내용의 명령 실행과 불필요한 export 방지.
-read_env() {
-  awk -F= -v key="$1" '
-    $1 == key {
-      print substr($0, index($0, "=") + 1)
-      exit
-    }
-  ' "$2"
-}
-
-# 지정한 배포 상태 파일을 사용하는 Compose Adapter.
-# 기존 상태와 후보 상태를 같은 함수로 실행하기 위한 env_file 매개변수.
-compose() {
-  local env_file="$1"
-  shift
-  DEPLOY_ENV_FILE="${env_file}" \
-    SECRET_ENV_FILE="${SECRET_ENV}" \
-    "${COMPOSE_SCRIPT}" "$@"
-}
-
-# rule-engine.sh의 Compose 호출을 위 Adapter로 연결.
-rule_compose() {
-  compose "$@"
-}
-
 # 대상 Container 하나의 강제 재생성과 Healthcheck 대기.
 # 사전 Pull 완료를 전제로 한 --pull never 사용.
 start_service() {
   local env_file="$1"
   local target_service="$2"
 
-  # Rule의 ACTIVE/STANDBY 교체 순서는 유지, HTTP 요청 대상만 먼저 제외.
-  if [[ "${target_service}" == rule-engine-* ]] && rolling_ready "${target_service}"; then
-    rolling_drain rule-service "${target_service}" || return 1
-  fi
-  compose "${env_file}" up \
+  rolling_compose "${env_file}" up \
     -d \
     --no-deps \
     --force-recreate \
@@ -101,9 +73,6 @@ start_service() {
     --wait \
     --wait-timeout 180 \
     "${target_service}" || return 1
-  if [[ "${target_service}" == rule-engine-* ]]; then
-    rolling_admit rule-service "${target_service}" || return 1
-  fi
 }
 
 # Discovery 교체 완료 조건.
@@ -118,118 +87,17 @@ wait_discovery_clients() {
   wait_rule_engine_cluster "${env_file}" || return 1
 }
 
-# deploy.env의 기존 Rule 이미지로 물리 인스턴스 1개 복구.
-# 로컬 이미지 부재 시에만 기존 이미지 Pull 재시도.
-restore_rule_engine() {
-  local target_service="$1"
-
-  if ! start_service "${DEPLOY_ENV}" "${target_service}"; then
-    compose "${DEPLOY_ENV}" pull "${target_service}" || return 1
-    start_service "${DEPLOY_ENV}" "${target_service}" || return 1
-  fi
-}
-
-rollback_rule_service() {
-  local rollback_failed=0
-
-  echo "이전 이미지로 복구: rule-service (${old_tag})" >&2
-
-  # rule_stage 상태:
-  # - none: Container 변경 전
-  # - first: 1차 물리 인스턴스 변경 이후
-  # - second: 2차 물리 인스턴스 변경 이후
-  # 복구 순서: 마지막 변경 인스턴스부터 역순 복구.
-  if [[ "${rule_stage}" == "second" ]]; then
-    # 마지막으로 변경한 인스턴스를 먼저 복구해, 1차 교체 인스턴스의 가용성을 유지.
-    if ! restore_rule_engine "${rule_second_service}"; then
-      echo "2차 Rule Engine 복구 실패: ${rule_second_service}" >&2
-      rollback_failed=1
-    fi
-  fi
-
-  if [[ "${rule_stage}" == "first" || "${rule_stage}" == "second" ]]; then
-    if ! restore_rule_engine "${rule_first_service}"; then
-      echo "1차 Rule Engine 복구 실패: ${rule_first_service}" >&2
-      rollback_failed=1
-    fi
-  fi
-
-  # 일부 복구 실패에도 나머지 복구 시도 완료 후 최종 상태 판정.
-  if ! wait_rule_engine_cluster "${DEPLOY_ENV}"; then
-    rollback_failed=1
-  fi
-
-  if ! "${SMOKE_SCRIPT}" "${base_url}"; then
-    rollback_failed=1
-  fi
-
-  ((rollback_failed == 0))
-}
-
-deploy_rule_service() {
-  local engine_a_running=0
-  local engine_b_running=0
-  local running_status
-
-  # 서비스별 Rule 배포의 선행 조건: 두 물리 인스턴스 모두 실행 중.
-  # 0대·1대 상태의 복원 책임은 전체 Infra 배포에만 부여.
-  if rule_engine_service_running "${DEPLOY_ENV}" "${RULE_ENGINE_A}"; then
-    engine_a_running=1
-  else
-    running_status=$?
-    ((running_status == 1)) || return "${running_status}"
-  fi
-
-  if rule_engine_service_running "${DEPLOY_ENV}" "${RULE_ENGINE_B}"; then
-    engine_b_running=1
-  else
-    running_status=$?
-    ((running_status == 1)) || return "${running_status}"
-  fi
-
-  if ((engine_a_running != 1 || engine_b_running != 1)); then
-    echo "Rule Engine 물리 인스턴스 2대가 실행 중이 아닙니다. 전체 Infra 배포로 복원하십시오." >&2
-    return 1
-  fi
-
-  rule_engine_prepare_rollout "${DEPLOY_ENV}" "${engine_a_running}" "${engine_b_running}" || {
-    echo "배포 전 Rule Engine 역할이 안정적이지 않아 배포를 중단합니다." >&2
-    return 1
-  }
-
-  rule_first_service="${RULE_ENGINE_ROLLOUT_FIRST}"
-  rule_second_service="${RULE_ENGINE_ROLLOUT_SECOND}"
-
-  if ! compose "${candidate}" pull "${RULE_ENGINE_A}" "${RULE_ENGINE_B}"; then
-    echo "새 이미지 pull 실패. 기존 컨테이너 유지" >&2
-    return 1
-  fi
-
-  # 1차 대상: 배포 시작 시점의 STANDBY 물리 인스턴스.
-  rule_stage="first"
-  start_service "${candidate}" "${rule_first_service}" || fail_and_rollback "1차 Rule Engine healthcheck 실패"
-  wait_rule_engine_registered "${candidate}" "${rule_first_service#rule-}" || fail_and_rollback "1차 Rule Engine Eureka 등록 실패"
-  wait_rule_engine_cluster "${candidate}" || fail_and_rollback "1차 교체 후 exactly-one-ACTIVE 검증 실패"
-
-  # 첫 재기동 이후 ACTIVE/STANDBY 교체 가능성.
-  # 2차 대상: 현재 역할명이 아니라 아직 갱신하지 않은 반대편 물리 인스턴스.
-  rule_stage="second"
-  start_service "${candidate}" "${rule_second_service}" || fail_and_rollback "2차 Rule Engine healthcheck 실패"
-  wait_rule_engine_registered "${candidate}" "${rule_second_service#rule-}" || fail_and_rollback "2차 Rule Engine Eureka 등록 실패"
-  wait_rule_engine_cluster "${candidate}" || fail_and_rollback "Rule Engine exactly-one-ACTIVE 검증 실패"
-}
-
 # Discovery 복구 또는 Rule 전용 복구 위임. 일반 앱의 복구는 rolling_deploy의 담당.
 rollback() {
   if [[ "${service}" == "rule-service" ]]; then
-    rollback_rule_service
+    rollback_rule_service "${old_tag}" "${base_url}"
     return
   fi
 
   echo "이전 이미지로 복구: ${service} (${old_tag})" >&2
 
   if ! start_service "${DEPLOY_ENV}" "${service}"; then
-    compose "${DEPLOY_ENV}" pull "${service}" || return 1
+    rolling_compose "${DEPLOY_ENV}" pull "${service}" || return 1
     start_service "${DEPLOY_ENV}" "${service}" || return 1
   fi
 
@@ -317,7 +185,11 @@ deploy_service_main() {
     ;;
   esac
 
-  if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
+  if [[ "${sha}" == --recover && "${service}" != rule-service ]]; then
+    usage
+    exit 64
+  fi
+  if [[ "${sha}" != --recover && ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
     echo "이미지 태그는 소문자 16진수 40자리 commit SHA여야 합니다." >&2
     exit 64
   fi
@@ -342,20 +214,28 @@ deploy_service_main() {
     echo "rule-engine.sh를 읽을 수 없습니다." >&2
     exit 1
   }
-  # shellcheck disable=SC1090
-  source "${RULE_ENGINE_SCRIPT}"
-
   # 전체 Infra 배포와 다른 서비스별 배포의 동시 실행 차단.
   acquire_deploy_lock \
     "${LOCK_FILE}" \
     "${DEPLOY_LOCK_WAIT_SECONDS}" \
     "서비스 배포: ${service}" || exit 1
 
+  # 공용 잠금 획득 이후 서버의 배포 함수 로드.
+  # shellcheck disable=SC1090
+  source "${RULE_ENGINE_SCRIPT}"
   # shellcheck disable=SC1091
   source "${SCRIPT_DIR}/rolling-deploy.sh"
 
+  if [[ "${sha}" == --recover ]]; then
+    rolling_compose "${DEPLOY_ENV}" config --quiet || return 1
+    recover_rule_service "${DEPLOY_ENV}" || return 1
+    "${SMOKE_SCRIPT}" "$(rolling_read SMOKE_BASE_URL "${DEPLOY_ENV}")" || return 1
+    echo "Rule 누락 인스턴스 복구 완료"
+    return
+  fi
+
   if [[ "${service}" != rule-service && "${service}" != discovery-service ]]; then
-    # 전체 Infra 배포와 같은 교체 함수 사용, 내부 함수의 중복 Lock 획득 제외.
+    # 대상 서비스의 A/B 교체와 성공 이미지 정리.
     rolling_initialize_routes || exit 1
     old_tag="$(rolling_read "${tag_var}" "${DEPLOY_ENV}")"
     rolling_deploy "${service}" "${sha}" || return 1
@@ -365,12 +245,8 @@ deploy_service_main() {
     return
   fi
 
-  old_tag="$(read_env "${tag_var}" "${DEPLOY_ENV}")"
-  base_url="$(read_env SMOKE_BASE_URL "${DEPLOY_ENV}")"
-  # Rule Rollback 범위와 물리 인스턴스 순서의 실행 중 상태 기록.
-  rule_stage="none"
-  rule_first_service=""
-  rule_second_service=""
+  old_tag="$(rolling_read "${tag_var}" "${DEPLOY_ENV}")"
+  base_url="$(rolling_read SMOKE_BASE_URL "${DEPLOY_ENV}")"
 
   [[ "${old_tag}" =~ ^[0-9a-f]{40}$ ]] || {
     echo "기존 이미지 태그가 올바르지 않습니다." >&2
@@ -395,12 +271,12 @@ deploy_service_main() {
 ' "${DEPLOY_ENV}" >"${candidate}"
 
   # 실제 Container 변경 전 후보 Compose 설정의 완전한 해석 확인.
-  compose "${candidate}" config --quiet
+  rolling_compose "${candidate}" config --quiet
 
   if [[ "${service}" == "rule-service" ]]; then
-    deploy_rule_service || exit 1
+    deploy_rule_service "${candidate}" || exit 1
   else
-    if ! compose "${candidate}" pull "${service}"; then
+    if ! rolling_compose "${candidate}" pull "${service}"; then
       echo "새 이미지 pull 실패. 기존 컨테이너 유지" >&2
       exit 1
     fi
