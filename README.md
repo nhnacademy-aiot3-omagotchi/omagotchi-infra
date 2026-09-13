@@ -19,6 +19,7 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
 - Gateway Service
 - Identity Service
 - Learning Service
+- Prediction Service
 - Rule Engine A/B
 - Nginx
 - Cloudflare Tunnel
@@ -64,13 +65,14 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
   - 일반 앱은 A/B 정의만 유지, 구형 단일 구성의 자동 전환 제외
 - `nginx/conf.d/default.conf`: Frontend·Gateway Route
 - `scripts/compose.sh`: Runtime 설정 검증·Compose 실행 Adapter
-- `scripts/sync-runtime-config.sh`: Runtime 설정 후보 검증·직전 설정 백업·원자적 교체
+- `scripts/sync-runtime-config.sh`: 배포 잠금·Git 갱신·Runtime 설정 검증·원자적 교체
+  - 기본 실행은 설정 동기화만 수행, `--deploy-infra`는 같은 잠금으로 Infra 반영까지 수행
 - `scripts/configure-deploy-ssh.sh`: GitHub Runner의 SSH 접속 준비
 - `scripts/sync-runtime-remote.sh`: Runner에서 후보 설정 전달·서버 동기화 호출
   - 자동 배포·수동 설정 동기화에서 공동 사용, 서버의 Git 갱신 전에도 실행 가능
-- `scripts/deploy-infra.sh`: 전체 운영 구성 순차 배포
-  - A/B 한 자리씩 교체·외부 Smoke Test 순서 실행
-  - Nginx 설정 검증·Reload 실패 시 배포 실패 처리
+- `scripts/deploy-infra.sh`: Nginx·Cloudflared·관측 도구의 구성 반영
+  - 앱·Discovery·Rule의 교체 제외, 외부 Smoke Test 유지
+  - 설정 동기화 이후 내부 호출, 단독 실행 제외
 - `scripts/rolling-deploy.sh`: 일반 앱 A/B의 준비·요청 제외·교체·복귀·실패 슬롯 복구
   - `rolling_deploy`: 사전 확인·평상시 A/B 교체·성공 버전 기록
   - 하위 함수: 실제 Compose·Eureka·Nginx 상태 확인과 변경
@@ -82,7 +84,7 @@ Omagotchi 운영 Container·Ingress·배포 자동화 저장소.
   - 알림 상태 저장소 전체 부재 시 자동 생성, 기존 저장소 재사용
   - 개별 서비스 배포와 중앙 로그 저장소 최초 준비는 별도 유지
 - `scripts/deploy-service.sh`: 단일 서비스 이미지 배포·복구
-- `scripts/rule-engine.sh`: Rule A/B 상태·역할 검증
+- `scripts/rule-engine.sh`: Rule A/B 역할 확인·순차 배포·실패 복구
 - `scripts/smoke-test.sh`: 외부 Route·인증 경계 확인
 - `scripts/observability-check.sh`: 중앙 로그 연결 전 Elastic 버전·기존 계정의 허용 작업 조회
 - `observability/`: Filebeat 중앙 로그·ElastAlert2 운영 오류 알림·팀 저장소 초기화
@@ -124,17 +126,24 @@ shellcheck scripts/*.sh tests/*.sh
 - 서비스 `main` Ruleset: Required Check만 강제하고 `Require branches to be up to date before merging` 비활성화
 - Infra Required Check: `dev`와 `main` 모두 `Validate Compose and Shell`을 적용
 - 서비스 `main`: 이미지 Build·Publish
-- Infra `main`: 구성 검증 → Runtime 설정 동기화 → 업무 서비스 배포·Smoke Test → 관측성 배포
+- Infra `main`: 검증 → 잠금 획득 → Git·Runtime 설정 동기화 → Nginx·Cloudflared 반영·Smoke Test → 관측성 반영
+  - 설정 동기화와 Infra 반영 사이의 잠금 해제 없음
+  - 애플리케이션 이미지·A/B 상태의 자동 교체 없음
 - Nginx Upstream: Docker Embedded DNS를 10초 주기로 재해석해 Container IP 변경 반영
 - Runtime 설정 동기화: 자동 Infra 배포의 선행 단계, 설정만 바꿀 때는 수동 실행
 - Infra 전체 배포: `main` Push와 `workflow_dispatch` 모두 `DEPLOY_ENABLED=true`일 때만 실행
 - Kill Switch: 평상시 `DEPLOY_ENABLED=true`, 배포 중단이 필요할 때 `false`
 - 자동 배포 Trigger: 운영 구성·`observability/**`·Script·배포 Workflow 변경, Test·PR 검증 Workflow만 바뀐 경우 제외
 - Infra 배포 직렬화: main 반영이 연속되어도 하나의 자동 배포 흐름만 실행
-- 배포 직렬화: 서비스·Infra 배포가 같은 Lock을 최대 600초 대기
-- Discovery 변경: Eureka Client보다 먼저 배포
+- 배포 직렬화: 서비스·Infra·설정 동기화가 같은 Lock을 최대 30분 대기
+  - 잠금 획득 전의 대기 한도, 진행 중인 배포의 실행 시간 제한과 별개
+- Discovery 변경: 별도 서비스 배포 후 기존 Eureka Client의 재등록 확인
 - Rule A/B 변경: 두 Instance 동시 재생성 금지
+  - 누락된 인스턴스: `deploy-service.sh rule-service --recover`로 현재 이미지 복구
+  - 실행 중인 인스턴스는 유지, 두 인스턴스 복구 후 역할 안정화 확인
 - 일반 앱: Frontend·Gateway·Identity·Learning·Prediction 상시 A/B, 한 자리씩 교체
+  - 앱의 환경변수·Compose 설정·JWT 파일 변경: Infra 동기화 후 영향 서비스만 명시적 재배포
+  - 서비스별 배포: 같은 SHA도 강제 교체, JWT 파일 교체·운영 복구에 사용
   - 기존 A/B의 준비 상태 확인 후 교체, 구형 단일 컨테이너가 남으면 자동 진행 중단
   - 신규 서버의 빈 구성 초기화와 장시간 SSE 연속성은 별도 검증 대상
 - 완료 판단: CI 성공과 실제 운영 Health·Route 검증의 분리

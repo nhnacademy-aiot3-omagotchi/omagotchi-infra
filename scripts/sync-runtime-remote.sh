@@ -3,6 +3,12 @@
 set -euo pipefail
 umask 077
 
+if (($# > 1)) || [[ "${1:-}" != "" && "${1:-}" != --deploy-infra ]]; then
+  echo "사용법: $0 [--deploy-infra]" >&2
+  exit 64
+fi
+operation="${1:-}"
+
 : "${PROD_ENV:?PROD_ENV is required}"
 
 runner_env_file="${RUNNER_TEMP}/prod.env"
@@ -46,5 +52,5 @@ ssh \
   -o StrictHostKeyChecking=yes \
   -o ConnectTimeout=10 \
   "$DEPLOY_USER@$DEPLOY_HOST" \
-  "bash -s -- '$DEPLOY_PATH' '$GITHUB_SHA' '$incoming_path'" \
+  "bash -s -- '$DEPLOY_PATH' '$GITHUB_SHA' '$incoming_path' ${operation}" \
   < scripts/sync-runtime-config.sh

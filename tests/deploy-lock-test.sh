@@ -32,26 +32,21 @@ wait_for_file() {
   fail "Lock 획득 완료 신호를 기다리는 중 시간 초과가 발생했습니다."
 }
 
-for deploy_script in deploy-service.sh deploy-infra.sh sync-runtime-config.sh; do
-  assert_contains 'DEPLOY_LOCK_WAIT_SECONDS=600' \
-    "${INFRA_DIR}/scripts/${deploy_script}" \
-    "${deploy_script}의 Lock 대기 시간이 600초로 설정되지 않았습니다."
+reference_wait="$(sed -n 's/^DEPLOY_LOCK_WAIT_SECONDS=//p' "${INFRA_DIR}/scripts/deploy-service.sh")"
+[[ "${reference_wait}" =~ ^[1-9][0-9]*$ ]] || fail "유한한 양의 잠금 대기 시간 필요."
+for deploy_script in deploy-service.sh sync-runtime-config.sh; do
+  script_wait="$(sed -n 's/^DEPLOY_LOCK_WAIT_SECONDS=//p' "${INFRA_DIR}/scripts/${deploy_script}")"
+  [[ "${script_wait}" == "${reference_wait}" ]] || fail "배포 진입점 사이의 잠금 대기 시간 불일치."
   assert_contains 'acquire_deploy_lock' \
     "${INFRA_DIR}/scripts/${deploy_script}" \
     "${deploy_script}가 공용 Lock 획득 함수를 사용하지 않습니다."
 done
 
-service_lock_function="$(sed -n '/^acquire_deploy_lock() {$/,/^}$/p' \
-  "${INFRA_DIR}/scripts/deploy-service.sh")"
-infra_lock_function="$(sed -n '/^acquire_deploy_lock() {$/,/^}$/p' \
-  "${INFRA_DIR}/scripts/deploy-infra.sh")"
-runtime_config_lock_function="$(sed -n '/^acquire_deploy_lock() {$/,/^}$/p' \
-  "${INFRA_DIR}/scripts/sync-runtime-config.sh")"
-[[ "${service_lock_function}" == "${infra_lock_function}" ]] ||
-  fail "서비스 배포와 Infra 배포의 Lock 함수가 서로 다릅니다."
-[[ "${service_lock_function}" == "${runtime_config_lock_function}" ]] ||
-  fail "서비스 배포와 Runtime 설정 동기화의 Lock 함수가 서로 다릅니다."
+# 설정 동기화 Workflow가 잠금 대기 도중 먼저 종료되지 않는 실행 여유 확인.
+sync_timeout_minutes="$(sed -n 's/^    timeout-minutes: //p' "${INFRA_DIR}/.github/workflows/sync-runtime-config.yml")"
+((sync_timeout_minutes * 60 > reference_wait)) || fail "Workflow 제한 시간이 잠금 대기 시간 이하입니다."
 
+# 함수 본문의 문자열 비교 대신 잠금 성공·실패·동시 실행 결과 확인.
 # shellcheck disable=SC1091
 source "${INFRA_DIR}/scripts/deploy-service.sh"
 

@@ -38,7 +38,7 @@ jobs:
 
   deploy:
     name: Deploy to School Server
-    # Environment Secret을 같은 Job에서 동기화한 후 전체 구성을 배포.
+    # 설정 동기화부터 공용 Infra 반영까지 서버 잠금 1회 사용.
     if: ${{ github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' }}
     needs:
       - validate
@@ -72,24 +72,8 @@ jobs:
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: bash scripts/configure-deploy-ssh.sh
 
-      - name: Sync runtime configuration
+      - name: Sync configuration and deploy infrastructure
         shell: bash
         env:
           PROD_ENV: ${{ secrets.PROD_ENV }}
-        run: bash scripts/sync-runtime-remote.sh
-
-      - name: Deploy infrastructure
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ssh \
-            -i "$HOME/.ssh/deploy_key" \
-            -p "$DEPLOY_PORT" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            -o ConnectTimeout=10 \
-            "$DEPLOY_USER@$DEPLOY_HOST" \
-            "bash -s -- '$DEPLOY_PATH' '$GITHUB_SHA'" \
-            < scripts/deploy-infra.sh
+        run: bash scripts/sync-runtime-remote.sh --deploy-infra

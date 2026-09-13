@@ -6,7 +6,7 @@ Infra 운영 담당자를 위한 Host 준비·배포·검증 절차.
 
 - 최초 운영 Host 준비
 - Runtime 설정·JWT Key 배치
-- 전체 Infra 배포
+- 공용 Infra 반영·서비스별 배포
 - 배포 후 확인·복구
 
 ## 변경 전 로컬 확인
@@ -89,18 +89,23 @@ chmod 644 ../secrets/jwt-public.pem
 
 - 후보 검증: 전체 `prod.env`의 필수값·중복 Key 확인
 - Secret 교체: GitHub `production` Environment의 `PROD_ENV` 전체 교체
-- Infra 변경 동반: Infra `main` 반영 시 자동 배포가 Runtime 설정 동기화 후 전체 배포 수행
+- Infra 변경 동반: Infra `main` 반영 시 설정 동기화·공용 Infra 반영
 - 설정만 변경: Infra `main`의 `Sync Runtime Configuration` Workflow 수동 실행
 - 결과 확인: Workflow 성공·서버 `prod.env` 권한 `600` 확인
-- 수동 동기화 적용: 영향 서비스만 별도 배포
+- 앱 적용: 자동·수동 동기화 모두 영향 서비스만 별도 배포
+  - 앱 환경변수·Compose 실행 설정·JWT 파일 변경: 현재 성공 SHA로 해당 서비스 재배포
+  - `restart`만으로 환경변수·Compose 변경 적용 불가
+  - Nginx·관측 도구 설정만 바뀐 경우 앱 배포 불필요
+  - 공유 Secret 변경: 호출·수신 서비스의 호환성과 적용 순서 확인, 이미지 복구만으로 Secret 복구 불가
 
 ### 동기화 처리 순서
 
 - 후보 전송: Runner 임시 파일 생성·서버 `.incoming-prod.env.*` 전송
-- 배타 실행: 서비스·Infra 배포와 동일한 공용 Lock을 최대 600초 대기
+- 배타 실행: 서비스·Infra 배포와 동일한 공용 Lock을 최대 30분 대기
 - Source 동기화: 서버 Infra 저장소를 Workflow의 `main` Revision으로 Fast-forward
   - Git 파일 갱신에만 `umask 022` 적용, 후보·복구본 생성에는 `umask 077` 유지
-- 설정 검증: 현재 `deploy.env`·후보 `prod.env`의 Compose 설정 검증
+- 설정 검증: 현재 `deploy.env`·후보 `prod.env`의 앱·관측 Compose 검증
+  - 관측 도구 6개 사용을 전제로 Elasticsearch·Telegram·Grafana 필수값 확인
 - 변경 없음: 현재 `prod.env`와 동일하면 기존 복구본을 유지하고 교체 생략
 - 직전본 보존: 기존 `prod.env`를 `prod.env.previous`로 백업
 - 설정 확정: 후보 파일의 `prod.env` 원자적 교체·권한 `600` 적용
@@ -127,40 +132,48 @@ shellcheck scripts/*.sh tests/*.sh
 - Runtime 설정: 필수 항목·파일 권한 확인
 - Runtime 설정 변경: `Sync Runtime Configuration` 성공 후 서비스별 적용 시점 결정
 - 외부 자원: 운영 Host 기준 Network 연결 확인
-- Infra `main` Push: 구성 검증·Runtime 설정 동기화 성공 후 전체 배포 실행
+- Infra `main` Push: 구성 검증·Runtime 설정 동기화 성공 후 공용 Infra 반영
 - Kill Switch: 저장소 변수 `DEPLOY_ENABLED=true`일 때만 자동·수동 전체 배포 실행
 - 활성화 시점: Infra main 반영 전에 `DEPLOY_ENABLED=true` 확인, 뒤늦게 바꾼 경우 수동 재실행 필요
 - 배포 중단: 운영 장애나 정비 시 `DEPLOY_ENABLED=false`로 전환
 
-## 전체 Infra 배포
+## 공용 Infra 반영
 
-```bash
-./scripts/deploy-infra.sh \
-  "$PWD" \
-  <40-character-infra-commit-sha>
-```
+- 실행: GitHub Actions의 `Deploy Infrastructure`에서 `main`으로 실행
+- 처리: 설정 동기화의 `--deploy-infra` 모드로 Git·설정·Infra 반영을 한 번의 잠금 안에서 실행
+- `deploy-infra.sh`: 동기화 후 불러오는 내부 함수, 단독 실행 미지원
 
 - 선행 조건: 일반 앱 A/B 구성·전체 서비스 이미지·Runtime 설정·중앙 로그 저장소 준비 완료
-- 배포 진입점: `deploy-infra.sh`, Nginx 기동 전에 `runtime/upstreams.conf` 생성
+- 분배 목록: Nginx 기동 전에 `runtime/upstreams.conf` 준비, 기존 A/B 분배 목록 유지
   - 해당 파일이 없는 상태의 `docker compose up` 또는 `compose.sh up`으로 초기 기동 금지
   - 신규 서버의 빈 구성 초기화는 현재 자동 처리 범위에서 제외
 - 알림 상태 저장소: 전체 부재 시 동일 배포 Lock 안에서 최초 생성, 준비된 경우 재사용
-- 배포 순서: Discovery → Nginx → Rule → Gateway·Frontend·Identity·Learning·Prediction → 관측성
+- 반영 순서: Nginx·Cloudflared → 외부 Smoke Test → 관측성
+- 제외 대상: Frontend·Gateway·Identity·Learning·Prediction·Rule·Discovery 교체
+  - 앱 설정 변경은 영향 서비스의 개별 배포로 적용
+  - 서버·Network·DB 자체 장애의 무중단 보장 아님
 - Container 명령: `exec -T --interactive=false`, SSH로 전달한 배포 Script의 표준 입력과 분리
   - `-T`만 사용하면 TTY만 해제, 남은 배포 Script를 소비한 뒤 성공 종료하는 현상 가능
 - 공개 관측 파일: Container 시작 전 Bind Mount 읽기·탐색 권한 복구, Secret 권한 변경 없음
-- Rule 초기화: 물리 Instance별 순차 기동·역할 안정화
-- Rule 후속 배포: 현재 STANDBY부터 순차 교체
-- Rule 완료 조건: 두 Engine 등록·연속 3회 exactly-one-ACTIVE
 - 자동 배포: `main` Push와 `DEPLOY_ENABLED=true`를 모두 요구
 - 수동 재실행: `main` 대상 `workflow_dispatch`와 `DEPLOY_ENABLED=true`를 모두 요구
 - Runtime 설정: 자동·수동 전체 배포 모두 GitHub `PROD_ENV` 동기화 성공을 선행 조건으로 사용
 - Trigger 제외: Test와 PR 검증 Workflow만 변경된 main 반영은 전체 배포를 실행하지 않음
 - Workflow 직렬화: 연속 main 반영은 Infra 자동 배포 Workflow 단위로 직렬화
-- 동시 실행: 기존 서비스·Infra 배포가 있으면 공용 Lock을 최대 600초 대기
+- 동시 실행: 기존 서비스·Infra 배포가 있으면 공용 Lock을 최대 30분 대기
+- 대기 한도: 잠금 획득 전부터 계산, 실행 중인 배포의 30분 강제 종료 의미 아님
+- 수동 설정 동기화: 잠금 대기와 검증 시간을 포함한 Workflow 실행 한도 40분
 - 잠금 시간 초과: 실행 중인 배포를 중단하지 않고 새 배포만 실패
 - Workflow 시간 제한: 전체 작업의 실행 상한, 모든 재시도의 최대 대기 시간 합계 보장 아님
   - 제한 도달 시 실패로 처리, 실행 중인 인스턴스·분배 목록·미완료 기록 확인 후 복구 판단
+
+### 배포 분리 후 운영 확인
+
+- Infra 반영 전후: 앱·Discovery·Rule의 Container ID와 이미지 유지 확인
+- 같은 Infra 재실행: 변경 없는 관측 도구의 Container ID 유지 확인
+- 영향 앱의 현재 SHA 재배포: 해당 A/B만 한 자리씩 교체, 다른 서비스 유지 확인
+- 완료 확인: 외부 Smoke Test·관측 도구 준비 상태 확인
+- 확인 전제: 로컬 회귀 테스트와 실제 학교 서버의 배포 결과 구분
 
 ### 일반 앱 A/B 교체
 
@@ -173,6 +186,9 @@ shellcheck scripts/*.sh tests/*.sh
   - `STARTING`·초기 Health 응답만으로 배포 준비 완료 판단 금지
   - 일시적인 503·조회 실패는 대상별 최대 90초 동안 재확인, 복구되지 않으면 교체 중단
   - 제한 시간 초과 시 실패 대상과 마지막 검사 내용 출력, HTTP 실패의 URL·상태 코드 포함
+- 실행: 해당 서비스의 Release Workflow 재실행 또는 `deploy-service.sh <service> <현재 성공 SHA>`
+  - 같은 SHA도 A/B 순차 교체, 앱 설정·JWT 파일 변경 적용에 사용
+  - Infra 배포에서는 A/B 변경 여부를 비교하거나 자동 교체하지 않음
 - 요청 제외
   - Frontend·Gateway·Prediction: Nginx 후보 설정 검사·Reload·이전 Worker 종료 확인
     - 파일 교체·Reload 명령 실패 시 직전 파일 복구와 대상 앱 유지, 실제 설정 반영 여부 확인 필요
@@ -192,7 +208,7 @@ shellcheck scripts/*.sh tests/*.sh
   - `.rollout/<service>.state`: 대상·구/신 SHA·진행 단계
     - 각 자리의 분배 복귀·Smoke Test·이미지 기록 완료 후 제거
   - 완료된 A 다음의 사전 검사 실패: 새 A와 기존 B 유지, 미완료 교체 기록 없이 배포 실패 처리
-    - 상태 복구 후 Workflow 재실행 가능, B부터 이어받지 않고 A부터 순차 재배포
+    - 상태 복구 후 해당 서비스 Workflow 재실행 가능, A부터 순차 재교체
 - 미완료 기록이 남은 경우
   - 자동 재실행 중단, 기록 삭제만으로 재시도 금지
   - 실제 실행 이미지·정상인 반대 자리·Nginx 분배 목록·Eureka 제외 상태 확인
@@ -210,6 +226,20 @@ shellcheck scripts/*.sh tests/*.sh
 - 보장 범위
   - 같은 서버에서의 일반 앱 교체, 서버·Discovery·Nginx·DB 자체 장애의 고가용성 보장 아님
   - 장시간 SSE·Rabbit 소비·예약 작업의 실제 교체 결과는 별도 검증 필요
+
+### Rule 누락 인스턴스 복구
+
+```bash
+./scripts/deploy-service.sh rule-service --recover
+```
+
+- 사용 시점: Rule A/B 중 누락되거나 종료된 인스턴스가 있는 경우
+- 복구 기준: 현재 `deploy.env`의 Rule 이미지, 이미지 버전 기록 변경 없음
+- 순서: 두 인스턴스 상태 조회 → 없는 인스턴스만 순차 기동 → Eureka 등록·역할 안정화 → Smoke Test
+- 실행 중인 인스턴스의 강제 교체 없음, 두 개가 실행 중이면 상태 확인만 수행
+- 조회·기동 실패 시 즉시 중단, 이미 복구한 인스턴스 유지
+- 두 인스턴스 복구 후 새 버전의 일반 Rule 배포 가능
+- 실행 중이지만 비정상인 인스턴스의 자동 판별·강제 교체는 이 명령의 범위에서 제외
 
 ### 관측성 자동배포
 
@@ -238,7 +268,7 @@ shellcheck scripts/*.sh tests/*.sh
   - 전체 서비스 Scrape·Trace 저장·Telegram 수신은 별도 운영 검증
 - 실패 처리: Actions 실패, 이미 배포된 업무 서비스의 자동 Rollback 없음
   - 관측성 로그·저장소 준비 상태 확인 후 `main`의 `Deploy Infrastructure` 재실행
-  - 배포 재실행 시 업무 서비스 단계도 포함, 관측성 보조 Script의 단독 실행은 공용 Lock 미적용
+  - Infra 재실행에서도 앱 교체 없음, 관측성 보조 Script의 단독 실행은 공용 Lock 미적용
   - 복구를 위한 `down --volumes`·초기화 무조건 재실행 금지
 
 - 근거: [Docker Compose up](https://docs.docker.com/reference/cli/docker/compose/up/)
