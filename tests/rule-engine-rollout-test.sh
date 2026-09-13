@@ -87,27 +87,15 @@ wait_rule_engine_cluster() {
   return "${cluster_result}"
 }
 
-rule_engine_prepare_rollout fixture.env 0 0
-assert_equals "${RULE_ENGINE_A}" "${RULE_ENGINE_ROLLOUT_FIRST}" "0대 부트스트랩 1차 대상 오류"
-assert_equals "${RULE_ENGINE_B}" "${RULE_ENGINE_ROLLOUT_SECOND}" "0대 부트스트랩 2차 대상 오류"
-
-rule_engine_prepare_rollout fixture.env 1 0
-assert_equals "${RULE_ENGINE_B}" "${RULE_ENGINE_ROLLOUT_FIRST}" "engine-b 누락 복구 순서 오류"
-assert_equals "${RULE_ENGINE_A}" "${RULE_ENGINE_ROLLOUT_SECOND}" "engine-b 누락 후 2차 대상 오류"
-
-rule_engine_prepare_rollout fixture.env 0 1
-assert_equals "${RULE_ENGINE_A}" "${RULE_ENGINE_ROLLOUT_FIRST}" "engine-a 누락 복구 순서 오류"
-assert_equals "${RULE_ENGINE_B}" "${RULE_ENGINE_ROLLOUT_SECOND}" "engine-a 누락 후 2차 대상 오류"
-
 cluster_pair="${RULE_ENGINE_B} ${RULE_ENGINE_A}"
 cluster_calls=()
-rule_engine_prepare_rollout fixture.env 1 1
+rule_engine_prepare_rollout fixture.env
 assert_equals "${RULE_ENGINE_A}" "${RULE_ENGINE_ROLLOUT_FIRST}" "현재 STANDBY 1차 선택 오류"
 assert_equals "${RULE_ENGINE_B}" "${RULE_ENGINE_ROLLOUT_SECOND}" "반대편 물리 인스턴스 선택 오류"
 assert_equals "fixture.env" "${cluster_calls[*]}" "2대 실행 상태의 사전 안정화 누락"
 
 cluster_result=1
-if rule_engine_prepare_rollout fixture.env 1 1 >/dev/null 2>&1; then
+if rule_engine_prepare_rollout fixture.env >/dev/null 2>&1; then
   fail "불안정한 2대 클러스터의 롤아웃이 허용되었습니다."
 fi
 assert_equals "" "${RULE_ENGINE_ROLLOUT_FIRST}" "실패한 롤아웃 계획에 1차 대상이 남았습니다."
@@ -117,16 +105,21 @@ cluster_result=0
 running_a=0
 running_b=0
 ps_failure=""
+recovery_failure_target=""
 infra_calls=()
 infra_cluster_pair="${RULE_ENGINE_A} ${RULE_ENGINE_B}"
 ps_calls_file="${TEST_TMP_DIR}/ps-calls"
 unexpected_calls_file="${TEST_TMP_DIR}/unexpected-calls"
 : >"${unexpected_calls_file}"
 
-rule_compose() {
+rolling_compose() {
   local env_file="$1"
   shift
 
+  if [[ "$1" == pull ]]; then
+    infra_calls+=("pull:${env_file}:${*: -1}")
+    return 0
+  fi
   if [[ "$1" != "ps" ]]; then
     printf 'unexpected:%s\n' "$*" >>"${unexpected_calls_file}"
     return 2
@@ -148,11 +141,12 @@ rule_compose() {
   return 0
 }
 
-rule_engine_start() {
+start_rule_engine() {
   local env_file="$1"
   local service="$2"
 
   infra_calls+=("start:${env_file}:${service}")
+  [[ "${service}" != "${recovery_failure_target}" ]] || return 1
 
   case "${service}" in
   "${RULE_ENGINE_A}") running_a=1 ;;
@@ -173,9 +167,9 @@ running_a=0
 running_b=0
 infra_calls=()
 : >"${ps_calls_file}"
-rollout_rule_engine_infra fixture.env
+recover_rule_service fixture.env
 assert_equals \
-  "start:fixture.env:${RULE_ENGINE_A} registered:fixture.env:engine-a start:fixture.env:${RULE_ENGINE_B} registered:fixture.env:engine-b cluster:fixture.env" \
+  "pull:fixture.env:${RULE_ENGINE_A} start:fixture.env:${RULE_ENGINE_A} registered:fixture.env:engine-a pull:fixture.env:${RULE_ENGINE_B} start:fixture.env:${RULE_ENGINE_B} registered:fixture.env:engine-b cluster:fixture.env" \
   "${infra_calls[*]}" \
   "0대 부트스트랩 호출 순서 오류"
 assert_equals "${RULE_ENGINE_A} ${RULE_ENGINE_B}" "$(tr '\n' ' ' <"${ps_calls_file}" | sed 's/ $//')" \
@@ -185,9 +179,9 @@ running_a=1
 running_b=0
 infra_calls=()
 : >"${ps_calls_file}"
-rollout_rule_engine_infra fixture.env
+recover_rule_service fixture.env
 assert_equals \
-  "start:fixture.env:${RULE_ENGINE_B} registered:fixture.env:engine-b cluster:fixture.env start:fixture.env:${RULE_ENGINE_A} registered:fixture.env:engine-a cluster:fixture.env" \
+  "pull:fixture.env:${RULE_ENGINE_B} start:fixture.env:${RULE_ENGINE_B} registered:fixture.env:engine-b cluster:fixture.env" \
   "${infra_calls[*]}" \
   "engine-b 누락 상태의 복구 순서 오류"
 
@@ -195,9 +189,9 @@ running_a=0
 running_b=1
 infra_calls=()
 : >"${ps_calls_file}"
-rollout_rule_engine_infra fixture.env
+recover_rule_service fixture.env
 assert_equals \
-  "start:fixture.env:${RULE_ENGINE_A} registered:fixture.env:engine-a cluster:fixture.env start:fixture.env:${RULE_ENGINE_B} registered:fixture.env:engine-b cluster:fixture.env" \
+  "pull:fixture.env:${RULE_ENGINE_A} start:fixture.env:${RULE_ENGINE_A} registered:fixture.env:engine-a cluster:fixture.env" \
   "${infra_calls[*]}" \
   "engine-a 누락 상태의 복구 순서 오류"
 
@@ -206,23 +200,36 @@ running_b=1
 infra_cluster_pair="${RULE_ENGINE_B} ${RULE_ENGINE_A}"
 infra_calls=()
 : >"${ps_calls_file}"
-rollout_rule_engine_infra fixture.env
+recover_rule_service fixture.env
 assert_equals \
-  "cluster:fixture.env start:fixture.env:${RULE_ENGINE_A} registered:fixture.env:engine-a cluster:fixture.env start:fixture.env:${RULE_ENGINE_B} registered:fixture.env:engine-b cluster:fixture.env" \
+  "cluster:fixture.env" \
   "${infra_calls[*]}" \
-  "2대 실행 상태의 STANDBY 우선 롤아웃 순서 오류"
+  "복구 명령이 실행 중인 두 인스턴스를 교체함"
 
 running_a=1
 running_b=1
 ps_failure="${RULE_ENGINE_A}"
 infra_calls=()
 : >"${ps_calls_file}"
-if rollout_rule_engine_infra fixture.env >/dev/null 2>&1; then
+if recover_rule_service fixture.env >/dev/null 2>&1; then
   fail "Compose 상태 조회 실패 후 롤아웃이 계속됐습니다."
 fi
 assert_equals "${RULE_ENGINE_A}" "$(<"${ps_calls_file}")" "Compose 상태 조회 실패 위치 오류"
 assert_equals "" "${infra_calls[*]-}" "Compose 상태 조회 실패 뒤 후속 호출이 실행되었습니다."
 ps_failure=""
+
+# 누락 인스턴스 기동 실패 시 반대편 유지, 다음 인스턴스 기동 중단.
+running_a=0
+running_b=0
+recovery_failure_target="${RULE_ENGINE_A}"
+infra_calls=()
+if recover_rule_service fixture.env >/dev/null 2>&1; then
+  fail "Rule 복구의 기동 실패를 성공으로 처리했습니다."
+fi
+assert_equals "pull:fixture.env:${RULE_ENGINE_A} start:fixture.env:${RULE_ENGINE_A}" \
+  "${infra_calls[*]}" "첫 기동 실패 후 반대편 기동 또는 완료 검사 실행"
+assert_equals 0 "${running_b}" "첫 기동 실패 후 반대편 변경"
+recovery_failure_target=""
 
 calls=()
 cluster_call_count=0
@@ -244,13 +251,13 @@ wait_rule_engine_cluster() {
   fi
 }
 
-compose() {
+rolling_compose() {
   local env_file="$1"
   shift
   calls+=("compose:${env_file}:$*")
 }
 
-start_service() {
+start_rule_engine() {
   calls+=("start:$1:$2")
 }
 
@@ -278,7 +285,7 @@ rule_stage="none"
 rule_first_service=""
 rule_second_service=""
 
-deploy_rule_service
+deploy_rule_service "${candidate}"
 
 assert_equals \
   "running:deployed.env:rule-engine-a running:deployed.env:rule-engine-b cluster:deployed.env compose:candidate.env:pull rule-engine-a rule-engine-b start:candidate.env:rule-engine-a registered:candidate.env:engine-a cluster:candidate.env start:candidate.env:rule-engine-b registered:candidate.env:engine-b cluster:candidate.env" \
@@ -296,7 +303,7 @@ rule_stage="none"
 rule_first_service=""
 rule_second_service=""
 
-deploy_rule_service
+deploy_rule_service "${candidate}"
 
 assert_equals \
   "running:deployed.env:rule-engine-a running:deployed.env:rule-engine-b cluster:deployed.env compose:candidate.env:pull rule-engine-a rule-engine-b start:candidate.env:rule-engine-b registered:candidate.env:engine-b cluster:candidate.env start:candidate.env:rule-engine-a registered:candidate.env:engine-a cluster:candidate.env" \
@@ -310,7 +317,7 @@ rule_stage="none"
 rule_first_service=""
 rule_second_service=""
 
-if deploy_rule_service >/dev/null 2>&1; then
+if deploy_rule_service "${candidate}" >/dev/null 2>&1; then
   fail "Rule Engine 단일 인스턴스 상태에서 서비스별 배포가 허용되었습니다."
 fi
 assert_equals \
@@ -338,7 +345,7 @@ rule_first_service="${RULE_ENGINE_A}"
 rule_second_service="${RULE_ENGINE_B}"
 
 rule_stage="first"
-rollback_rule_service 2>/dev/null
+rollback_rule_service "${old_tag}" "${base_url}" 2>/dev/null
 assert_equals \
   "restore:${RULE_ENGINE_A} cluster:${DEPLOY_ENV}" \
   "${restore_calls[*]}" \
@@ -346,7 +353,7 @@ assert_equals \
 
 restore_calls=()
 rule_stage="second"
-rollback_rule_service 2>/dev/null
+rollback_rule_service "${old_tag}" "${base_url}" 2>/dev/null
 assert_equals \
   "restore:${RULE_ENGINE_B} restore:${RULE_ENGINE_A} cluster:${DEPLOY_ENV}" \
   "${restore_calls[*]}" \
@@ -355,7 +362,7 @@ assert_equals \
 restore_calls=()
 restore_failure="${RULE_ENGINE_B}"
 rule_stage="second"
-if rollback_rule_service 2>/dev/null; then
+if rollback_rule_service "${old_tag}" "${base_url}" 2>/dev/null; then
   fail "일부 인스턴스 복구 실패를 성공으로 처리했습니다."
 fi
 assert_equals \

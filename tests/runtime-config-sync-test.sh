@@ -62,14 +62,24 @@ case "$1" in
     fi
     ;;
   rev-parse) printf '0000000000000000000000000000000000000000\n' ;;
-  fetch | cat-file | merge-base) ;;
-  merge) mkdir -p checkout-fixture; touch checkout-fixture/public.conf ;;
+  fetch)
+    [[ -z "${SYNC_TEST_FETCH_EVENTS:-}" ]] || printf 'fetch\n' >>"${SYNC_TEST_FETCH_EVENTS}"
+    ;;
+  cat-file | merge-base) ;;
+  merge)
+    mkdir -p checkout-fixture; touch checkout-fixture/public.conf
+    if [[ -n "${SYNC_TEST_INFRA_SOURCE:-}" ]]; then
+      cp "${SYNC_TEST_INFRA_SOURCE}" scripts/deploy-infra.sh
+    fi
+    ;;
   *) exit 1 ;;
 esac
 EOF
 
 cat >"${fake_bin}/flock" <<'EOF'
 #!/usr/bin/env bash
+[[ -z "${SYNC_TEST_LOCK_EVENTS:-}" ]] || printf 'lock\n' >>"${SYNC_TEST_LOCK_EVENTS}"
+if [[ -n "${SYNC_TEST_REAL_FLOCK:-}" ]]; then exec "${SYNC_TEST_REAL_FLOCK}" "$@"; fi
 exit 0
 EOF
 
@@ -148,6 +158,59 @@ assert_contains 'CURRENT_SECRET=old-runtime-value' "${secrets_dir}/prod.env.prev
 assert_contains 'Runtime 설정 변경 없음' "${output_file}" \
   "동일한 Runtime 설정의 교체 생략 상태가 명시되지 않았습니다."
 
+# 자동 배포: 서버에 새 함수가 없어도 Git 갱신 후 로드, 잠금 1회로 설정·Infra 반영.
+infra_source="${TEST_TMP_DIR}/infra-apply.sh"
+cat >"${infra_source}" <<'EOF'
+deploy_infrastructure() {
+  grep -Fq 'NEW_SECRET=new-runtime-value' "${SECRET_ENV}" || return 1
+  printf 'apply\n' >>"${SYNC_TEST_APPLY_EVENTS}"
+  # Linux에서는 다른 프로세스의 잠금 획득을 실제로 차단하는지 확인.
+  if [[ -n "${SYNC_TEST_REAL_FLOCK:-}" ]]; then
+    local status=0
+    "${SYNC_TEST_REAL_FLOCK}" -n -E 75 "${ROOT_DIR}/.omagotchi-deploy.lock" true || status=$?
+    [[ "${status}" == 75 ]] || return 1
+  fi
+  [[ "${SYNC_TEST_APPLY_FAIL:-false}" != true ]]
+}
+EOF
+real_flock="$(command -v flock || true)"
+for scenario in changed unchanged apply-failure invalid; do
+  if [[ "${scenario}" == changed ]]; then
+    printf 'CURRENT_SECRET=before-auto-apply\n' >"${secrets_dir}/prod.env"
+  fi
+  candidate="${secrets_dir}/.incoming-prod.env.auto"
+  printf 'NEW_SECRET=new-runtime-value\n' >"${candidate}"
+  rm -f "${fixture_dir}/scripts/deploy-infra.sh"
+  : >"${TEST_TMP_DIR}/locks"
+  : >"${TEST_TMP_DIR}/fetches"
+  : >"${TEST_TMP_DIR}/applies"
+  apply_fail=false; compose_fail=false
+  [[ "${scenario}" != apply-failure ]] || apply_fail=true
+  [[ "${scenario}" != invalid ]] || compose_fail=true
+  status=0
+  # SSH와 동일한 stdin 전달. 새 스크립트는 fake Git merge에서만 설치.
+  SYNC_TEST_EVENTS="${events_file}" SYNC_TEST_REAL_FLOCK="${real_flock}" \
+    SYNC_TEST_LOCK_EVENTS="${TEST_TMP_DIR}/locks" SYNC_TEST_FETCH_EVENTS="${TEST_TMP_DIR}/fetches" \
+    SYNC_TEST_APPLY_EVENTS="${TEST_TMP_DIR}/applies" SYNC_TEST_INFRA_SOURCE="${infra_source}" \
+    SYNC_TEST_APPLY_FAIL="${apply_fail}" SYNC_TEST_COMPOSE_FAIL="${compose_fail}" \
+    PATH="${fake_bin}:${PATH}" bash -s -- "${fixture_dir}" "${sha}" "${candidate}" --deploy-infra \
+    <"${INFRA_DIR}/scripts/sync-runtime-config.sh" >"${output_file}" 2>&1 || status=$?
+  if [[ "${scenario}" == changed || "${scenario}" == unchanged ]]; then
+    [[ "${status}" == 0 ]] || fail "자동 Infra 반영 실패: ${scenario}"
+  else
+    [[ "${status}" != 0 ]] || fail "설정 검증 또는 Infra 반영 실패의 성공 처리: ${scenario}"
+  fi
+  [[ "$(wc -l <"${TEST_TMP_DIR}/locks" | tr -d '[:space:]')" == 1 ]] || fail "자동 배포의 중복 잠금 획득"
+  [[ "$(wc -l <"${TEST_TMP_DIR}/fetches" | tr -d '[:space:]')" == 1 ]] || fail "자동 배포의 중복 Git 갱신"
+  if [[ "${scenario}" == invalid ]]; then
+    [[ ! -s "${TEST_TMP_DIR}/applies" ]] || fail "설정 검증 실패 이후 Infra 반영"
+  else
+    assert_contains 'apply' "${TEST_TMP_DIR}/applies" "설정 동기화 이후 Infra 반영 누락"
+  fi
+  [[ ! -e "${candidate}" ]] || fail "자동 배포 이후 설정 후보 잔존"
+done
+# 다음 검증의 독립적인 기존 설정·복구본 복원.
+printf 'CURRENT_SECRET=old-runtime-value\n' >"${secrets_dir}/prod.env.previous"
 printf 'CURRENT_SECRET=stable-runtime-value\n' >"${secrets_dir}/prod.env"
 candidate="${secrets_dir}/.incoming-prod.env.invalid"
 printf 'NEW_SECRET=new-runtime-value\n' >"${candidate}"

@@ -40,8 +40,11 @@ done
 # 원격 실행은 새 파일이 없는 서버에서도 시작할 수 있도록 Runner의 본문 전달.
 assert_contains '< scripts/sync-runtime-config.sh' "${INFRA_DIR}/scripts/sync-runtime-remote.sh" \
   "서버 설정 동기화 스크립트 전달 누락"
-assert_before 'run: bash scripts/sync-runtime-remote.sh' '< scripts/deploy-infra.sh' "${DEPLOY_WORKFLOW}" \
-  "설정 동기화 이전의 전체 배포 실행"
+assert_contains 'run: bash scripts/sync-runtime-remote.sh --deploy-infra' "${DEPLOY_WORKFLOW}" \
+  "설정 동기화와 Infra 반영의 공통 실행 누락"
+if grep -Fq '< scripts/deploy-infra.sh' "${DEPLOY_WORKFLOW}"; then
+  fail "Infra 반영의 별도 SSH 실행으로 잠금 경계 분리"
+fi
 
 # 자동 배포의 대상·실행 조건 확인. 작업 이름·검증 본문·설정값의 복제 제외.
 assert_contains "if: \${{ github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' }}" \

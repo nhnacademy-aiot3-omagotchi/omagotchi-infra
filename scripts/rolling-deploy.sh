@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# 일반 앱의 고정 A/B 배포 함수. deploy-infra.sh·deploy-service.sh의 배포 Lock 안에서 호출.
+# 일반 앱의 고정 A/B 배포 함수. 서비스별 배포 Lock 안에서 호출.
 # rolling_deploy: 준비된 A/B의 순차 교체와 실패 슬롯 복구.
 # 나머지 함수: Compose·Eureka·Nginx 상태 확인과 변경.
 # 이 파일을 직접 실행하지 않고 배포 진입점에서 source로 사용.

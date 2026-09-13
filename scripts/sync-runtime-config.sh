@@ -6,13 +6,14 @@ umask 077
 # - 서버 Infra 저장소를 Workflow의 main Revision으로 Fast-forward
 # - 후보 prod.env를 현재 deploy.env와 함께 검증
 # - 검증 성공 이후에만 직전 설정 백업과 원자적 교체
-# - Container 재생성·재시작과 deploy.env 변경은 수행하지 않음
+# - 기본 실행: 설정만 교체, Container·deploy.env 변경 제외
+# - --deploy-infra: 잠금을 유지한 채 공용 Infra 반영까지 실행
 
 usage() {
-  echo "사용법: $0 <infra-directory> <40-character-commit-sha> <candidate-prod-env>" >&2
+  echo "사용법: $0 <infra-directory> <40-character-commit-sha> <candidate-prod-env> [--deploy-infra]" >&2
 }
 
-if (( $# != 3 )); then
+if (( $# < 3 || $# > 4 )) || [[ "${4:-}" != "" && "${4:-}" != --deploy-infra ]]; then
   usage
   exit 64
 fi
@@ -20,6 +21,7 @@ fi
 INFRA_DIR="$(cd -- "$1" && pwd -P)"
 sha="$2"
 candidate_argument="$3"
+deploy_infra="${4:-}"
 
 if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
   echo "인프라 revision은 소문자 16진수 40자리 commit SHA여야 합니다." >&2
@@ -33,7 +35,8 @@ SECRET_ENV="${SECRETS_DIR}/prod.env"
 PREVIOUS_SECRET_ENV="${SECRETS_DIR}/prod.env.previous"
 COMPOSE_SCRIPT="${INFRA_DIR}/scripts/compose.sh"
 LOCK_FILE="${ROOT_DIR}/.omagotchi-deploy.lock"
-DEPLOY_LOCK_WAIT_SECONDS=600
+# 여러 저장소의 연속 배포를 위한 최대 30분 대기. 잠금 획득 후의 실행 시간과 별개.
+DEPLOY_LOCK_WAIT_SECONDS=1800
 
 [[ -d "${INFRA_DIR}/.git" ]] || {
   echo "infra Git 저장소가 아닙니다: ${INFRA_DIR}" >&2
@@ -220,19 +223,25 @@ if cmp -s -- "${candidate}" "${SECRET_ENV}"; then
   rm -f -- "${candidate}"
   candidate=""
   echo "Runtime 설정 변경 없음: ${old_sha} -> ${sha}"
-  exit 0
+else
+  # 기존 설정의 직전 복구본을 동일 File System에서 원자적으로 확정.
+  previous_candidate="$(mktemp "${SECRETS_DIR}/.prod.env.previous.XXXXXX")"
+  cp "${SECRET_ENV}" "${previous_candidate}"
+  chmod 600 "${previous_candidate}"
+  mv -f "${previous_candidate}" "${PREVIOUS_SECRET_ENV}"
+  previous_candidate=""
+
+  # 후보 파일은 secrets Directory 내부에 있으므로 동일 File System mv 보장.
+  mv -f "${candidate}" "${SECRET_ENV}"
+  candidate=""
+  chmod 600 "${SECRET_ENV}"
+
+  echo "Runtime 설정 동기화 완료: ${old_sha} -> ${sha}"
 fi
 
-# 기존 설정의 직전 복구본을 동일 File System에서 원자적으로 확정.
-previous_candidate="$(mktemp "${SECRETS_DIR}/.prod.env.previous.XXXXXX")"
-cp "${SECRET_ENV}" "${previous_candidate}"
-chmod 600 "${previous_candidate}"
-mv -f "${previous_candidate}" "${PREVIOUS_SECRET_ENV}"
-previous_candidate=""
-
-# 후보 파일은 secrets Directory 내부에 있으므로 동일 File System mv 보장.
-mv -f "${candidate}" "${SECRET_ENV}"
-candidate=""
-chmod 600 "${SECRET_ENV}"
-
-echo "Runtime 설정 동기화 완료: ${old_sha} -> ${sha}"
+# 설정이 같아도 Infra 변경 반영. Git 갱신 전에는 서버의 새 스크립트에 의존하지 않음.
+if [[ "${deploy_infra}" == --deploy-infra ]]; then
+  # shellcheck disable=SC1091
+  source "${INFRA_DIR}/scripts/deploy-infra.sh"
+  deploy_infrastructure
+fi

@@ -108,6 +108,12 @@ reset_case() {
   SMOKE_SCRIPT="${TEST_DIRECTORY}/smoke.sh"
 }
 
+# Given/When: 같은 이미지의 명시적인 서비스 재배포.
+reset_case
+rolling_deploy identity-service "${old}" >/dev/null
+# Then: 파일 마운트 갱신·운영 복구용 기존 강제 교체 유지.
+[[ "$(grep -c '^start:' "${events}")" == 2 ]] || fail "명시적인 같은 SHA 재배포 생략"
+
 # Given/When: 평소 A/B 두 개를 한 자리씩 교체.
 reset_case
 rolling_deploy identity-service "${new}" >/dev/null
